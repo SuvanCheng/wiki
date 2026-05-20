@@ -191,47 +191,91 @@
   editAnswer.addEventListener('keydown', function (e) {
     var isMac = /Mac/.test(navigator.platform);
     var mod = isMac ? e.metaKey : e.ctrlKey;
-
     if (!mod) return;
 
     var ta = e.target;
     var start = ta.selectionStart;
     var end = ta.selectionEnd;
     var sel = ta.value.substring(start, end);
+    var lineStart = ta.value.lastIndexOf('\n', start - 1) + 1;
+    var currentLine = ta.value.substring(lineStart, start);
 
-    // Ctrl/Cmd + B: Bold
+    var handled = true;
+
     if (e.key === 'b' || e.key === 'B') {
-      e.preventDefault();
+      // Bold
       wrapSelection(ta, '**', '**');
-    }
-    // Ctrl/Cmd + I: Italic
-    else if (e.key === 'i' || e.key === 'I') {
-      e.preventDefault();
+    } else if (e.key === 'i' || e.key === 'I') {
+      // Italic
       wrapSelection(ta, '*', '*');
-    }
-    // Ctrl/Cmd + K: Link
-    else if (e.key === 'k' || e.key === 'K') {
-      e.preventDefault();
-      if (sel) {
-        wrapSelection(ta, '[', '](url)');
-      } else {
-        insertText(ta, '[text](url)');
-      }
-    }
-    // Ctrl/Cmd + `: Inline code
-    else if (e.key === '`') {
-      e.preventDefault();
-      wrapSelection(ta, '`', '`');
-    }
-    // Ctrl/Cmd + Shift + K: Code block
-    else if ((e.key === 'k' || e.key === 'K') && e.shiftKey) {
-      e.preventDefault();
+    } else if ((e.key === 'k' || e.key === 'K') && e.shiftKey) {
+      // Code block (Ctrl+Shift+K)
       if (sel) {
         var lang = prompt('代码语言（可选，如 go/python/bash）：') || '';
         wrapSelection(ta, '```' + lang + '\n', '\n```');
       } else {
         insertText(ta, '\n```\n\n```\n');
       }
+    } else if (e.key === 'k' || e.key === 'K') {
+      // Link (Ctrl+K)
+      if (sel) {
+        wrapSelection(ta, '[', '](url)');
+      } else {
+        insertText(ta, '[text](url)');
+      }
+    } else if (e.key === '`') {
+      // Inline code
+      wrapSelection(ta, '`', '`');
+    } else if (e.key === 'h' || e.key === 'H') {
+      // Heading — cycle H2 → H3 → H4 → clear
+      var hMatch = currentLine.match(/^(#{1,4})\s/);
+      if (hMatch) {
+        var level = hMatch[1].length;
+        if (level >= 4) {
+          // Remove heading
+          ta.value = ta.value.substring(0, lineStart) + currentLine.replace(/^#{1,4}\s/, '') + ta.value.substring(start);
+          ta.selectionStart = ta.selectionEnd = lineStart;
+        } else {
+          var newLevel = level + 1;
+          var newPrefix = '#'.repeat(newLevel) + ' ';
+          ta.value = ta.value.substring(0, lineStart) + newPrefix + currentLine.substring(hMatch[0].length) + ta.value.substring(start);
+          ta.selectionStart = ta.selectionEnd = lineStart + newPrefix.length;
+        }
+      } else {
+        insertAtLineStart(ta, lineStart, '## ');
+      }
+    } else if (e.key === 'u' || e.key === 'U') {
+      if (e.shiftKey) {
+        // Ordered list (Ctrl+Shift+U)
+        insertAtLineStart(ta, lineStart, '1. ');
+      } else {
+        // Unordered list (Ctrl+U)
+        insertAtLineStart(ta, lineStart, '- ');
+      }
+    } else if ((e.key === 's' || e.key === 'S') && e.shiftKey) {
+      // Strikethrough (Ctrl+Shift+S)
+      wrapSelection(ta, '~~', '~~');
+    } else if ((e.key === 'x' || e.key === 'X') && e.shiftKey) {
+      // Task list (Ctrl+Shift+X)
+      insertAtLineStart(ta, lineStart, '- [ ] ');
+    } else if (e.key === '>' || (e.key === 'b' && e.shiftKey) || (e.key === 'B' && e.shiftKey)) {
+      // Blockquote
+      if (e.key === '>') {
+        insertAtLineStart(ta, lineStart, '> ');
+      } else {
+        // Ctrl+Shift+B: blockquote
+        insertAtLineStart(ta, lineStart, '> ');
+      }
+    } else if (e.key === '-' && e.shiftKey) {
+      // Horizontal rule (Ctrl+Shift+-)
+      insertText(ta, '\n---\n');
+    } else {
+      handled = false;
+    }
+
+    if (handled) {
+      e.preventDefault();
+      ta.dispatchEvent(new Event('input'));
     }
   });
 
@@ -261,6 +305,15 @@
     textarea.selectionStart = textarea.selectionEnd = start + text.length;
     textarea.focus();
     textarea.dispatchEvent(new Event('input'));
+  }
+
+  function insertAtLineStart(textarea, lineStart, prefix) {
+    var start = textarea.selectionStart;
+    var before = textarea.value.substring(0, lineStart);
+    var after = textarea.value.substring(lineStart);
+    textarea.value = before + prefix + after;
+    textarea.selectionStart = textarea.selectionEnd = lineStart + prefix.length;
+    textarea.focus();
   }
 
   // ===== File upload (all types) =====
@@ -347,7 +400,7 @@
       editId.value = '';
       editQuestion.value = '';
       editCategory.value = '';
-      editVisibility.value = 'internal';
+      editVisibility.value = 'public';
       editAnswer.value = '';
       editPreview.innerHTML = '';
     }

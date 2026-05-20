@@ -7,13 +7,26 @@ cd "$SCRIPT_DIR"
 BIN_DIR="$SCRIPT_DIR/bin"
 mkdir -p "$BIN_DIR"
 
-# 版本号：优先用 git tag，否则用日期
+# 版本号：SemVer 语义化版本
+# 优先级: QA_VERSION 环境变量 > git tag > 源码默认值
 if [ -n "${QA_VERSION:-}" ]; then
   VERSION="$QA_VERSION"
 elif git rev-parse --is-inside-work-tree &>/dev/null; then
-  VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo 'dev')"
+  TAG="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+  if [ -n "$TAG" ]; then
+    COMMITS="$(git rev-list --count "$TAG"..HEAD 2>/dev/null || echo 0)"
+    HASH="$(git rev-parse --short HEAD 2>/dev/null)"
+    if [ "$COMMITS" -eq 0 ]; then
+      VERSION="$TAG"
+    else
+      VERSION="$TAG-$COMMITS-g$HASH"
+    fi
+  else
+    HASH="$(git rev-parse --short HEAD 2>/dev/null)"
+    VERSION="0.0.0-g$HASH"
+  fi
 else
-  VERSION="$(date +%Y.%m.%d)"
+  VERSION="1.0.0"
 fi
 
 LDFLAGS="-s -w -X main.version=$VERSION"
