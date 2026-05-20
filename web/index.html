@@ -11,7 +11,6 @@
 <body>
 
 <div class="layout">
-  <!-- ===== Left: main content ===== -->
   <main class="main-left">
     <div class="top-bar">
       <div class="search-bar">
@@ -26,9 +25,7 @@
     </div>
   </main>
 
-  <!-- ===== Right: sidebar ===== -->
   <aside class="sidebar">
-    <!-- Lock / unlock -->
     <div class="sidebar-section">
       <div class="lock-bar">
         <span id="lockIcon" class="lock-icon" title="点击解锁">&#128274;</span>
@@ -41,7 +38,6 @@
       </div>
     </div>
 
-    <!-- Stats -->
     <div class="sidebar-section">
       <h3 class="sidebar-heading">统计</h3>
       <div id="statsContent">
@@ -52,15 +48,13 @@
       </div>
     </div>
 
-    <!-- Categories -->
     <div class="sidebar-section">
-      <h3 class="sidebar-heading">分类</h3>
+      <h3 class="sidebar-heading">分类标签</h3>
       <div id="catList" class="cat-list">
         <span class="text-muted" style="font-size:0.78rem;">加载中...</span>
       </div>
     </div>
 
-    <!-- Recent -->
     <div class="sidebar-section">
       <h3 class="sidebar-heading">最近更新</h3>
       <div id="recentList" class="recent-list">
@@ -68,18 +62,16 @@
       </div>
     </div>
 
-    <!-- Database management (admin only) -->
     <div id="dbAdminSection" class="sidebar-section" hidden>
       <h3 class="sidebar-heading">数据管理</h3>
       <div class="db-actions">
-        <button id="btnExport" class="btn btn-secondary btn-block">导出数据库</button>
-        <button id="btnImport" class="btn btn-secondary btn-block">导入数据库</button>
-        <input type="file" id="dbFileInput" accept=".db" style="display:none">
+        <button id="btnExport" class="btn btn-secondary btn-block">导出全部数据 (.zip)</button>
+        <button id="btnImport" class="btn btn-secondary btn-block">导入数据 (.zip 或 .db)</button>
+        <input type="file" id="dbFileInput" accept=".zip,.db" style="display:none">
         <span id="importStatus" class="upload-status"></span>
       </div>
     </div>
 
-    <!-- Version -->
     <div class="sidebar-section" style="border-bottom:none">
       <div class="version-info">
         <span class="version-label">QA Wiki</span>
@@ -104,8 +96,8 @@
       </label>
       <div style="display:flex;gap:12px">
         <label class="field" style="flex:1">
-          <span class="field-label">分类</span>
-          <input type="text" id="editCategory" class="field-input" placeholder="如：编程、运维">
+          <span class="field-label">分类标签（逗号分隔多个）</span>
+          <input type="text" id="editCategory" class="field-input" placeholder="如：编程, Go, 并发">
         </label>
         <label class="field" style="flex:0 0 160px">
           <span class="field-label">可见性</span>
@@ -119,13 +111,14 @@
         <div class="field-label-row">
           <span>答案（Markdown） <span class="required">*</span></span>
           <span>
-            <button type="button" id="btnUpload" class="btn-sm" style="font-size:0.75rem">上传图片</button>
-            <input type="file" id="fileInput" accept="image/*" style="display:none">
+            <small class="shortcut-hint">Ctrl+B 加粗 &nbsp; Ctrl+I 斜体 &nbsp; Ctrl+K 链接 &nbsp; Ctrl+` 代码</small>
+            <button type="button" id="btnUpload" class="btn-sm" style="font-size:0.75rem;margin-left:8px">上传文件</button>
+            <input type="file" id="fileInput" accept="*/*" style="display:none">
             <span id="uploadStatus" class="upload-status"></span>
           </span>
         </div>
         <textarea id="editAnswer" class="field-input field-textarea" rows="16" required
-          placeholder="支持 Markdown 语法：标题、代码块、表格、图片...&#10;可以直接 Ctrl+V 粘贴图片，或拖放图片到编辑区。"></textarea>
+          placeholder="支持 Markdown 语法。Ctrl+V 粘贴图片，或拖放文件到编辑区。&#10;快捷键：Ctrl+B 加粗 | Ctrl+I 斜体 | Ctrl+K 链接 | Ctrl+` 行内代码"></textarea>
       </label>
       <div class="field-preview">
         <div class="field-label">预览</div>

@@ -1,0 +1,52 @@
+❯   bash scripts/download_deps.sh
+
+==> 下载前端依赖到 web/lib/ ...
+  ✓ marked.min.js
+  ✓ github-markdown-light.css
+  ✓ github-markdown-dark.css
+
+依赖下载完成。文件列表:
+total 176
+-rw-r--r--@ 1 chengshuwei  staff    22K  5月 19 19:34 github-markdown-dark.css
+-rw-r--r--@ 1 chengshuwei  staff    22K  5月 19 19:34 github-markdown-light.css
+-rw-r--r--@ 1 chengshuwei  staff    39K  5月 19 19:34 marked.min.js
+❯ export https_proxy=http://127.0.0.1:7890 http_proxy=http://127.0.0.1:7890 all_proxy=socks5://127.0.0.1:7890
+❯ brew install go
+Warning: cask.jws.json: update failed, falling back to cached version.                                                                                                                                                                                Downloading  19.0MB/-------
+✔︎ JSON API cask.jws.json                                                                                                                                                                                                                              Downloaded   15.7MB/ 15.7MB
+✔︎ JSON API formula.jws.json                                                                                                                                                                                                                           Downloaded   32.5MB/ 32.5MB
+Inspect the formula dependency plan before installing with `brew install --ask`.
+Enable ask mode by setting `HOMEBREW_ASK=1`.
+Hide these hints with `HOMEBREW_NO_ENV_HINTS=1` (see `man brew`).
+==> Fetching downloads for: go
+✔︎ Bottle Manifest go (1.26.3)                                                                                                                                                                                                                         Downloaded    7.5KB/  7.5KB
+✔︎ Bottle go (1.26.3)                                                                                                                                                                                                                                  Downloaded   64.0MB/ 64.0MB
+==> Pouring go--1.26.3.arm64_tahoe.bottle.tar.gz
+🍺  /opt/homebrew/Cellar/go/1.26.3: 14,960 files, 228.6MB
+==> Running `brew cleanup go`...
+Disable this behaviour by setting `HOMEBREW_NO_INSTALL_CLEANUP=1`.
+Hide these hints with `HOMEBREW_NO_ENV_HINTS=1` (see `man brew`).
+❯ go mod tidy
+go: downloading modernc.org/sqlite v1.29.6
+go: downloading modernc.org/mathutil v1.6.0
+go: downloading github.com/mattn/go-sqlite3 v1.14.22
+go: downloading golang.org/x/sys v0.16.0
+go: downloading modernc.org/fileutil v1.3.0
+go: downloading modernc.org/libc v1.41.0
+go: downloading modernc.org/gc/v3 v3.0.0-20240107210532-573471604cb6
+go: downloading github.com/google/pprof v0.0.0-20221118152302-e6195bd50e26
+go: downloading github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec
+go: downloading github.com/hashicorp/golang-lru/v2 v2.0.7
+go: downloading github.com/dustin/go-humanize v1.0.1
+go: downloading modernc.org/strutil v1.2.0
+go: downloading modernc.org/token v1.1.0
+go: downloading golang.org/x/tools v0.17.0
+go: downloading github.com/ncruces/go-strftime v0.1.9
+go: downloading github.com/google/uuid v1.3.0
+go: downloading modernc.org/memory v1.7.2
+go: downloading github.com/mattn/go-isatty v0.0.16
+go: downloading github.com/pmezard/go-difflib v1.0.0
+go: downloading golang.org/x/mod v0.14.0
+
+go run ./cmd/qa-wiki
+bash build.sh

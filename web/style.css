@@ -468,6 +468,8 @@ body {
 .version-label { font-size: 0.72rem; color: var(--text-muted); }
 .version-value { font-size: 0.72rem; font-weight: 600; color: var(--text-secondary); font-family: var(--font-mono); }
 
+.shortcut-hint { font-size: 0.65rem; color: var(--text-muted); }
+
 /* ===== Responsive ===== */
 @media (max-width: 800px) {
   .layout { flex-direction: column; }

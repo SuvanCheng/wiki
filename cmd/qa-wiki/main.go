@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -20,13 +21,12 @@ import (
 	"qa-wiki/web"
 )
 
-// Set via -ldflags at build time, e.g. -X main.version=1.2.3
 var version = "dev"
 
 var (
 	appSecret string
 	dbPath    string
-	imagesDir string
+	filesDir  string
 	dbMu      sync.Mutex
 	database  *sql.DB
 )
@@ -39,8 +39,8 @@ func main() {
 	fmt.Printf("QA Wiki v%s  管理密钥: %s\n", version, appSecret)
 
 	dbPath = resolveDBPath()
-	imagesDir = filepath.Join(filepath.Dir(dbPath), "images")
-	os.MkdirAll(imagesDir, 0755)
+	filesDir = filepath.Join(filepath.Dir(dbPath), "files")
+	os.MkdirAll(filesDir, 0755)
 
 	var err error
 	database, err = db.Open(dbPath)
@@ -66,12 +66,10 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	// /api/version
 	mux.HandleFunc("/api/version", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]string{"version": version})
 	})
 
-	// /api/auth
 	mux.HandleFunc("/api/auth", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
@@ -80,7 +78,6 @@ func main() {
 		handleAuth(w, r)
 	})
 
-	// /api/stats
 	mux.HandleFunc("/api/stats", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
@@ -89,7 +86,6 @@ func main() {
 		handleStats(w, r)
 	})
 
-	// /api/upload (admin only)
 	mux.HandleFunc("/api/upload", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
@@ -98,10 +94,10 @@ func main() {
 		handleUpload(w, r)
 	})
 
-	// /images/
-	mux.Handle("/images/", http.StripPrefix("/images/", http.FileServer(http.Dir(imagesDir))))
+	// Serve uploaded files — /files/ canonical; /images/ for existing content
+	mux.Handle("/files/", http.StripPrefix("/files/", http.FileServer(http.Dir(filesDir))))
+	mux.Handle("/images/", http.StripPrefix("/images/", http.FileServer(http.Dir(filesDir))))
 
-	// /api/qa — search (GET, public) and create (POST, admin)
 	mux.HandleFunc("/api/qa", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
@@ -109,12 +105,10 @@ func main() {
 		case http.MethodPost:
 			handleQACreate(w, r)
 		default:
-			w.Header().Set("Allow", "GET, POST")
 			http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
 
-	// /api/qa/{id}
 	mux.HandleFunc("/api/qa/", func(w http.ResponseWriter, r *http.Request) {
 		idStr := strings.TrimPrefix(r.URL.Path, "/api/qa/")
 		id, err := strconv.Atoi(idStr)
@@ -130,12 +124,10 @@ func main() {
 		case http.MethodDelete:
 			handleQADelete(w, r, id)
 		default:
-			w.Header().Set("Allow", "GET, PUT, DELETE")
 			http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
 
-	// /api/db/export (admin only)
 	mux.HandleFunc("/api/db/export", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
@@ -144,7 +136,6 @@ func main() {
 		handleDBExport(w, r)
 	})
 
-	// /api/db/import (admin only)
 	mux.HandleFunc("/api/db/import", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
@@ -224,43 +215,46 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, stats)
 }
 
-// ----- Image upload (admin only) -----
+// ----- File upload (admin only, all types) -----
 
 func handleUpload(w http.ResponseWriter, r *http.Request) {
 	if !requireAuth(w, r) {
 		return
 	}
 
-	if err := r.ParseMultipartForm(20 << 20); err != nil {
+	if err := r.ParseMultipartForm(50 << 20); err != nil { // 50 MB
 		writeJSON(w, 400, map[string]string{"error": "parse error: " + err.Error()})
 		return
 	}
-	file, header, err := r.FormFile("file")
+	uploadedFile, header, err := r.FormFile("file")
 	if err != nil {
 		writeJSON(w, 400, map[string]string{"error": "missing file: " + err.Error()})
 		return
 	}
-	defer file.Close()
+	defer uploadedFile.Close()
 
 	ext := strings.ToLower(filepath.Ext(header.Filename))
-	if ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".gif" && ext != ".webp" && ext != ".svg" && ext != ".bmp" {
-		writeJSON(w, 400, map[string]string{"error": "unsupported image type: " + ext})
-		return
-	}
-
 	name := fmt.Sprintf("%d%s", time.Now().UnixNano(), ext)
-	dst, err := os.Create(filepath.Join(imagesDir, name))
+	dst, err := os.Create(filepath.Join(filesDir, name))
 	if err != nil {
 		writeJSON(w, 500, map[string]string{"error": "create file: " + err.Error()})
 		return
 	}
 	defer dst.Close()
 
-	if _, err := io.Copy(dst, file); err != nil {
+	if _, err := io.Copy(dst, uploadedFile); err != nil {
 		writeJSON(w, 500, map[string]string{"error": "write file: " + err.Error()})
 		return
 	}
-	writeJSON(w, 200, map[string]string{"url": "/images/" + name, "name": header.Filename})
+
+	// Determine if it's an image for markdown syntax
+	isImage := ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".gif" || ext == ".webp" || ext == ".svg" || ext == ".bmp"
+
+	writeJSON(w, 200, map[string]string{
+		"url":     "/files/" + name,
+		"name":    header.Filename,
+		"isImage": fmt.Sprintf("%v", isImage),
+	})
 }
 
 // ----- QA handlers -----
@@ -342,20 +336,49 @@ func handleQADelete(w http.ResponseWriter, r *http.Request, id int) {
 	writeJSON(w, 200, map[string]string{"ok": "deleted"})
 }
 
-// ----- DB Export / Import (admin only) -----
+// ----- DB Export / Import -----
 
 func handleDBExport(w http.ResponseWriter, r *http.Request) {
 	if !requireAuth(w, r) {
 		return
 	}
-	// Force WAL checkpoint so all data is flushed to the main DB file
+	// Checkpoint WAL so the exported file is complete
 	dbMu.Lock()
 	database.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
 	dbMu.Unlock()
 
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", `attachment; filename="data.db"`)
-	http.ServeFile(w, r, dbPath)
+	// Export as zip: data.db + files/ directory
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="qa-wiki-export.zip"`)
+	zw := zip.NewWriter(w)
+	defer zw.Close()
+
+	// Add data.db
+	addFileToZip(zw, dbPath, "data.db")
+
+	// Add all files from filesDir
+	filepath.Walk(filesDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		rel, _ := filepath.Rel(filepath.Dir(filesDir), path)
+		addFileToZip(zw, path, rel)
+		return nil
+	})
+}
+
+func addFileToZip(zw *zip.Writer, srcPath, zipName string) {
+	f, err := os.Open(srcPath)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	w, err := zw.Create(zipName)
+	if err != nil {
+		return
+	}
+	io.Copy(w, f)
 }
 
 func handleDBImport(w http.ResponseWriter, r *http.Request) {
@@ -363,36 +386,74 @@ func handleDBImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := r.ParseMultipartForm(100 << 20); err != nil { // 100 MB
+	if err := r.ParseMultipartForm(200 << 20); err != nil { // 200 MB
 		writeJSON(w, 400, map[string]string{"error": "parse error: " + err.Error()})
 		return
 	}
-	file, header, err := r.FormFile("file")
+	uploadedFile, header, err := r.FormFile("file")
 	if err != nil {
 		writeJSON(w, 400, map[string]string{"error": "missing file: " + err.Error()})
 		return
 	}
-	defer file.Close()
+	defer uploadedFile.Close()
 
-	// Write to temp file for validation
-	tmpPath := dbPath + ".import"
-	dst, err := os.Create(tmpPath)
+	filename := strings.ToLower(header.Filename)
+
+	if strings.HasSuffix(filename, ".zip") {
+		handleDBImportZip(w, r, uploadedFile, header.Filename)
+	} else {
+		handleDBImportRaw(w, r, uploadedFile, header.Filename)
+	}
+}
+
+func handleDBImportZip(w http.ResponseWriter, r *http.Request, uploadedFile io.Reader, originalName string) {
+	// Save zip to temp file so we can read it with archive/zip
+	tmpZip, err := os.Create(dbPath + ".import.zip")
 	if err != nil {
 		writeJSON(w, 500, map[string]string{"error": "create temp: " + err.Error()})
 		return
 	}
-	if _, err := io.Copy(dst, file); err != nil {
-		dst.Close()
-		os.Remove(tmpPath)
+	defer os.Remove(tmpZip.Name())
+
+	if _, err := io.Copy(tmpZip, uploadedFile); err != nil {
+		tmpZip.Close()
 		writeJSON(w, 500, map[string]string{"error": "write temp: " + err.Error()})
 		return
 	}
-	dst.Close()
+	tmpZip.Close()
 
-	// Validate: must be a valid SQLite DB with questions table
-	testDB, err := db.Open(tmpPath)
+	zr, err := zip.OpenReader(tmpZip.Name())
 	if err != nil {
-		os.Remove(tmpPath)
+		writeJSON(w, 400, map[string]string{"error": "无效的 zip 文件: " + err.Error()})
+		return
+	}
+	defer zr.Close()
+
+	var dbEntry, filesPrefix string
+	for _, f := range zr.File {
+		if f.Name == "data.db" {
+			dbEntry = f.Name
+		}
+		if strings.HasPrefix(f.Name, "files/") && filesPrefix == "" {
+			filesPrefix = "files/"
+		}
+	}
+	if dbEntry == "" {
+		writeJSON(w, 400, map[string]string{"error": "zip 中没有找到 data.db"})
+		return
+	}
+
+	// Extract data.db for validation
+	tmpDBPath := dbPath + ".import"
+	if err := extractZipFile(zr, "data.db", tmpDBPath); err != nil {
+		writeJSON(w, 400, map[string]string{"error": "提取 data.db 失败: " + err.Error()})
+		return
+	}
+	defer os.Remove(tmpDBPath)
+
+	// Validate
+	testDB, err := db.Open(tmpDBPath)
+	if err != nil {
 		writeJSON(w, 400, map[string]string{"error": "无效的数据库文件: " + err.Error()})
 		return
 	}
@@ -400,52 +461,127 @@ func handleDBImport(w http.ResponseWriter, r *http.Request) {
 	err = testDB.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='questions'").Scan(&tableName)
 	testDB.Close()
 	if err != nil || tableName != "questions" {
-		os.Remove(tmpPath)
-		writeJSON(w, 400, map[string]string{"error": "数据库不包含 questions 表，格式不正确"})
+		writeJSON(w, 400, map[string]string{"error": "数据库不包含 questions 表"})
 		return
 	}
 
-	// Backup old DB and swap
+	// Swap databases
 	backupPath := dbPath + ".backup"
 	dbMu.Lock()
 	oldDB := database
 	database = nil
 	dbMu.Unlock()
-
 	if oldDB != nil {
 		oldDB.Close()
 	}
 
-	// Rename current to backup, import to current
 	os.Remove(backupPath)
 	os.Rename(dbPath, backupPath)
-	if err := os.Rename(tmpPath, dbPath); err != nil {
-		// Restore from backup
+	if err := os.Rename(tmpDBPath, dbPath); err != nil {
 		os.Rename(backupPath, dbPath)
-		os.Remove(tmpPath)
-		// Reopen
-		newDB, err := db.Open(dbPath)
-		if err != nil {
-			log.Fatalf("恢复数据库失败: %v", err)
-		}
+		newDB, _ := db.Open(dbPath)
 		dbMu.Lock()
 		database = newDB
 		dbMu.Unlock()
-		writeJSON(w, 500, map[string]string{"error": "替换数据库文件失败: " + err.Error()})
+		writeJSON(w, 500, map[string]string{"error": "替换数据库失败: " + err.Error()})
 		return
 	}
 
-	// Open new database
+	// Extract files
+	filesExtracted := 0
+	for _, f := range zr.File {
+		if strings.HasPrefix(f.Name, "files/") && !f.FileInfo().IsDir() {
+			destPath := filepath.Join(filesDir, strings.TrimPrefix(f.Name, "files/"))
+			os.MkdirAll(filepath.Dir(destPath), 0755)
+			if err := extractZipFile(zr, f.Name, destPath); err == nil {
+				filesExtracted++
+			}
+		}
+	}
+
 	newDB, err := db.Open(dbPath)
 	if err != nil {
-		// Restore from backup
 		os.Remove(dbPath)
 		os.Rename(backupPath, dbPath)
 		newDB, _ = db.Open(dbPath)
 		dbMu.Lock()
 		database = newDB
 		dbMu.Unlock()
-		writeJSON(w, 500, map[string]string{"error": "打开发布数据库失败: " + err.Error()})
+		writeJSON(w, 500, map[string]string{"error": "打开数据库失败: " + err.Error()})
+		return
+	}
+
+	dbMu.Lock()
+	database = newDB
+	dbMu.Unlock()
+
+	writeJSON(w, 200, map[string]string{
+		"ok":             "imported",
+		"name":           originalName,
+		"backup":         backupPath,
+		"filesExtracted": fmt.Sprintf("%d", filesExtracted),
+	})
+}
+
+func handleDBImportRaw(w http.ResponseWriter, r *http.Request, uploadedFile io.Reader, originalName string) {
+	tmpPath := dbPath + ".import"
+	dst, err := os.Create(tmpPath)
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": "create temp: " + err.Error()})
+		return
+	}
+	if _, err := io.Copy(dst, uploadedFile); err != nil {
+		dst.Close()
+		os.Remove(tmpPath)
+		writeJSON(w, 500, map[string]string{"error": "write temp: " + err.Error()})
+		return
+	}
+	dst.Close()
+	defer os.Remove(tmpPath)
+
+	testDB, err := db.Open(tmpPath)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "无效的数据库文件: " + err.Error()})
+		return
+	}
+	var tableName string
+	err = testDB.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='questions'").Scan(&tableName)
+	testDB.Close()
+	if err != nil || tableName != "questions" {
+		writeJSON(w, 400, map[string]string{"error": "数据库不包含 questions 表"})
+		return
+	}
+
+	backupPath := dbPath + ".backup"
+	dbMu.Lock()
+	oldDB := database
+	database = nil
+	dbMu.Unlock()
+	if oldDB != nil {
+		oldDB.Close()
+	}
+
+	os.Remove(backupPath)
+	os.Rename(dbPath, backupPath)
+	if err := os.Rename(tmpPath, dbPath); err != nil {
+		os.Rename(backupPath, dbPath)
+		newDB, _ := db.Open(dbPath)
+		dbMu.Lock()
+		database = newDB
+		dbMu.Unlock()
+		writeJSON(w, 500, map[string]string{"error": "替换数据库失败: " + err.Error()})
+		return
+	}
+
+	newDB, err := db.Open(dbPath)
+	if err != nil {
+		os.Remove(dbPath)
+		os.Rename(backupPath, dbPath)
+		newDB, _ = db.Open(dbPath)
+		dbMu.Lock()
+		database = newDB
+		dbMu.Unlock()
+		writeJSON(w, 500, map[string]string{"error": "打开数据库失败: " + err.Error()})
 		return
 	}
 
@@ -455,9 +591,31 @@ func handleDBImport(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, 200, map[string]string{
 		"ok":     "imported",
-		"name":   header.Filename,
+		"name":   originalName,
 		"backup": backupPath,
 	})
+}
+
+func extractZipFile(zr *zip.ReadCloser, name, destPath string) error {
+	for _, f := range zr.File {
+		if f.Name == name {
+			rc, err := f.Open()
+			if err != nil {
+				return err
+			}
+			defer rc.Close()
+
+			dst, err := os.Create(destPath)
+			if err != nil {
+				return err
+			}
+			defer dst.Close()
+
+			_, err = io.Copy(dst, rc)
+			return err
+		}
+	}
+	return fmt.Errorf("file %s not found in zip", name)
 }
 
 // ----- Browser -----

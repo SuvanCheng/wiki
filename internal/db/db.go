@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -190,20 +191,46 @@ func GetStats(db *sql.DB, includeInternal bool) (Stats, error) {
 		s.InternalCount = internalCount
 	}
 
-	// categories (top 10)
-	catQuery := "SELECT category, COUNT(*) AS cnt FROM questions WHERE category != ''"
+	// categories: split comma-separated tags and count individually
+	catQuery := "SELECT category FROM questions WHERE category != ''"
 	if !includeInternal {
 		catQuery += " AND visibility = 'public'"
 	}
-	catQuery += " GROUP BY category ORDER BY cnt DESC LIMIT 10"
 	catRows, err := db.Query(catQuery)
 	if err == nil {
 		defer catRows.Close()
+		catMap := make(map[string]int)
 		for catRows.Next() {
-			var c CatCount
-			if err := catRows.Scan(&c.Name, &c.Count); err == nil {
-				s.Categories = append(s.Categories, c)
+			var cat string
+			if err := catRows.Scan(&cat); err == nil {
+				for _, tag := range splitAndTrim(cat) {
+					catMap[tag]++
+				}
 			}
+		}
+		// Convert map to sorted slice (by count desc)
+		type kv struct {
+			k string
+			v int
+		}
+		var pairs []kv
+		for k, v := range catMap {
+			pairs = append(pairs, kv{k, v})
+		}
+		// Sort by count desc, then name asc
+		for i := 0; i < len(pairs); i++ {
+			for j := i + 1; j < len(pairs); j++ {
+				if pairs[j].v > pairs[i].v || (pairs[j].v == pairs[i].v && pairs[j].k < pairs[i].k) {
+					pairs[i], pairs[j] = pairs[j], pairs[i]
+				}
+			}
+		}
+		limit := 15
+		if len(pairs) < limit {
+			limit = len(pairs)
+		}
+		for i := 0; i < limit; i++ {
+			s.Categories = append(s.Categories, CatCount{Name: pairs[i].k, Count: pairs[i].v})
 		}
 	}
 	if s.Categories == nil {
@@ -231,4 +258,16 @@ func GetStats(db *sql.DB, includeInternal bool) (Stats, error) {
 	}
 
 	return s, nil
+}
+
+func splitAndTrim(s string) []string {
+	parts := strings.Split(s, ",")
+	var result []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
 }
