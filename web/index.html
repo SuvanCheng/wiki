@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QA Wiki</title>
+<link rel="stylesheet" href="/lib/github-markdown-light.css" id="github-md-light">
+<link rel="stylesheet" href="/lib/github-markdown-dark.css" id="github-md-dark" disabled>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<div class="layout">
+  <!-- ===== Left: main content ===== -->
+  <main class="main-left">
+    <div class="top-bar">
+      <div class="search-bar">
+        <input type="text" id="searchInput" class="search-input"
+          placeholder="搜索问题、答案或分类..." autocomplete="off" autofocus>
+        <span id="searchStatus" class="search-status"></span>
+      </div>
+      <button id="btnAdd" class="btn btn-primary">+ 新建</button>
+    </div>
+    <div id="cardContainer" class="card-container">
+      <div class="empty-state">加载中...</div>
+    </div>
+  </main>
+
+  <!-- ===== Right: sidebar ===== -->
+  <aside class="sidebar">
+    <!-- Lock / unlock -->
+    <div class="sidebar-section">
+      <div class="lock-bar">
+        <span id="lockIcon" class="lock-icon" title="点击解锁">&#128274;</span>
+        <span id="lockLabel" class="lock-label">仅公开条目</span>
+      </div>
+      <div id="lockInputRow" class="lock-input-row" hidden>
+        <input type="password" id="lockSecretInput" class="field-input" placeholder="输入访问密钥..."
+          style="font-size:0.78rem;padding:5px 8px;">
+        <button id="btnUnlock" class="btn btn-primary" style="font-size:0.75rem;padding:5px 10px;">解锁</button>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="sidebar-section">
+      <h3 class="sidebar-heading">统计</h3>
+      <div id="statsContent">
+        <div class="stat-row"><span class="stat-label">条目总数</span><span class="stat-value">--</span></div>
+        <div class="stat-row"><span class="stat-label">公开条目</span><span class="stat-value">--</span></div>
+        <div id="internalStatRow" class="stat-row" hidden>
+          <span class="stat-label">内部条目</span><span class="stat-value">--</span></div>
+      </div>
+    </div>
+
+    <!-- Categories -->
+    <div class="sidebar-section">
+      <h3 class="sidebar-heading">分类</h3>
+      <div id="catList" class="cat-list">
+        <span class="text-muted" style="font-size:0.78rem;">加载中...</span>
+      </div>
+    </div>
+
+    <!-- Recent -->
+    <div class="sidebar-section">
+      <h3 class="sidebar-heading">最近更新</h3>
+      <div id="recentList" class="recent-list">
+        <span class="text-muted" style="font-size:0.78rem;">加载中...</span>
+      </div>
+    </div>
+
+    <!-- Database management (admin only) -->
+    <div id="dbAdminSection" class="sidebar-section" hidden>
+      <h3 class="sidebar-heading">数据管理</h3>
+      <div class="db-actions">
+        <button id="btnExport" class="btn btn-secondary btn-block">导出数据库</button>
+        <button id="btnImport" class="btn btn-secondary btn-block">导入数据库</button>
+        <input type="file" id="dbFileInput" accept=".db" style="display:none">
+        <span id="importStatus" class="upload-status"></span>
+      </div>
+    </div>
+
+    <!-- Version -->
+    <div class="sidebar-section" style="border-bottom:none">
+      <div class="version-info">
+        <span class="version-label">QA Wiki</span>
+        <span id="versionText" class="version-value">--</span>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<!-- Edit Modal -->
+<div id="editModal" class="modal-overlay" hidden>
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="modalTitle">新建条目</h2>
+      <button id="btnModalClose" class="btn-icon" title="关闭">&times;</button>
+    </div>
+    <form id="editForm" autocomplete="off">
+      <input type="hidden" id="editId">
+      <label class="field">
+        <span class="field-label">问题 <span class="required">*</span></span>
+        <input type="text" id="editQuestion" class="field-input" required placeholder="输入问题标题...">
+      </label>
+      <div style="display:flex;gap:12px">
+        <label class="field" style="flex:1">
+          <span class="field-label">分类</span>
+          <input type="text" id="editCategory" class="field-input" placeholder="如：编程、运维">
+        </label>
+        <label class="field" style="flex:0 0 160px">
+          <span class="field-label">可见性</span>
+          <select id="editVisibility" class="field-input">
+            <option value="internal">Internal（内部）</option>
+            <option value="public">Public（公开）</option>
+          </select>
+        </label>
+      </div>
+      <label class="field">
+        <div class="field-label-row">
+          <span>答案（Markdown） <span class="required">*</span></span>
+          <span>
+            <button type="button" id="btnUpload" class="btn-sm" style="font-size:0.75rem">上传图片</button>
+            <input type="file" id="fileInput" accept="image/*" style="display:none">
+            <span id="uploadStatus" class="upload-status"></span>
+          </span>
+        </div>
+        <textarea id="editAnswer" class="field-input field-textarea" rows="16" required
+          placeholder="支持 Markdown 语法：标题、代码块、表格、图片...&#10;可以直接 Ctrl+V 粘贴图片，或拖放图片到编辑区。"></textarea>
+      </label>
+      <div class="field-preview">
+        <div class="field-label">预览</div>
+        <div id="editPreview" class="markdown-body preview-box"></div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="btnModalCancel" class="btn btn-secondary">取消</button>
+        <button type="submit" class="btn btn-primary">保存</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="/lib/marked.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
