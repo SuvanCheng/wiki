@@ -39,11 +39,13 @@
   var btnModalCancel = document.getElementById('btnModalCancel');
 
   var btnUpload = document.getElementById('btnUpload');
+  var btnPreview = document.getElementById('btnPreview');
+  var fieldPreview = document.getElementById('fieldPreview');
   var fileInput = document.getElementById('fileInput');
   var uploadStatus = document.getElementById('uploadStatus');
 
   var debounceTimer = null;
-  var previewTimer = null;
+  var previewVisible = false;
 
   // ===== Modal resize =====
   var modalEl = document.querySelector('#editModal .modal');
@@ -135,6 +137,51 @@
     }
   }
 
+  // ===== Code copy buttons =====
+  function addCopyButtons(container) {
+    container.querySelectorAll('.markdown-body pre').forEach(function (pre) {
+      if (pre.querySelector('.btn-copy')) return;
+      var btn = document.createElement('button');
+      btn.className = 'btn-copy';
+      btn.textContent = '复制';
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var code = pre.querySelector('code');
+        var text = code ? code.textContent : pre.textContent;
+        navigator.clipboard.writeText(text).then(function () {
+          btn.textContent = '已复制';
+          btn.classList.add('copied');
+          setTimeout(function () {
+            btn.textContent = '复制';
+            btn.classList.remove('copied');
+          }, 1500);
+        }).catch(function () {
+          btn.textContent = '失败';
+          setTimeout(function () { btn.textContent = '复制'; }, 1500);
+        });
+      });
+      pre.appendChild(btn);
+    });
+  }
+
+  // ===== Image zoom lightbox =====
+  document.addEventListener('click', function (e) {
+    var img = e.target.closest('.markdown-body img');
+    if (!img || e.target.closest('a')) return;
+    if (img.closest('.img-lightbox')) return;
+    var lb = document.createElement('div');
+    lb.className = 'img-lightbox';
+    var lbImg = document.createElement('img');
+    lbImg.src = img.src;
+    lb.appendChild(lbImg);
+    function close() { lb.remove(); document.removeEventListener('keydown', onEsc); }
+    function onEsc(ev) { if (ev.key === 'Escape') close(); }
+    lb.addEventListener('click', close);
+    lbImg.addEventListener('click', function (ev) { ev.stopPropagation(); });
+    document.addEventListener('keydown', onEsc);
+    document.body.appendChild(lb);
+  });
+
   // ===== Auth =====
   var authSecret = sessionStorage.getItem('qa_secret') || '';
 
@@ -217,9 +264,10 @@
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
     applyTheme();
     mermaidReady = false;
-    if (!editModal.hidden) {
+    if (!editModal.hidden && previewVisible) {
       editPreview.innerHTML = md(editAnswer.value);
       renderMermaidBlocks(editPreview);
+      addCopyButtons(editPreview);
     }
   });
 
@@ -297,7 +345,16 @@
     }
     var header = e.target.closest('.card-header');
     if (header && !e.target.closest('button')) {
-      header.closest('.card').classList.toggle('open');
+      var card = header.closest('.card');
+      card.classList.toggle('open');
+      if (card.classList.contains('open')) {
+        // Force GIFs to restart animation when card opens
+        card.querySelectorAll('img[src$=".gif"]').forEach(function (img) {
+          var src = img.src;
+          img.src = '';
+          requestAnimationFrame(function () { img.src = src; });
+        });
+      }
     }
   });
 
@@ -316,12 +373,20 @@
     saveEntry();
   });
 
-  editAnswer.addEventListener('input', function () {
-    clearTimeout(previewTimer);
-    previewTimer = setTimeout(function () {
+
+  // ===== Preview toggle =====
+  btnPreview.addEventListener('click', function () {
+    previewVisible = !previewVisible;
+    if (previewVisible) {
+      fieldPreview.hidden = false;
+      btnPreview.textContent = '隐藏预览';
       editPreview.innerHTML = md(editAnswer.value);
       renderMermaidBlocks(editPreview);
-    }, 200);
+      addCopyButtons(editPreview);
+    } else {
+      fieldPreview.hidden = true;
+      btnPreview.textContent = '预览';
+    }
   });
 
   // ===== Keyboard shortcuts for Markdown editor =====
@@ -412,7 +477,11 @@
 
     if (handled) {
       e.preventDefault();
-      ta.dispatchEvent(new Event('input'));
+      if (previewVisible) {
+        editPreview.innerHTML = md(ta.value);
+        renderMermaidBlocks(editPreview);
+        addCopyButtons(editPreview);
+      }
     }
   });
 
@@ -507,7 +576,11 @@
         } else {
           insertAtCursor(editAnswer, '[' + (data.name || 'file') + '](' + data.url + ')');
         }
-        editAnswer.dispatchEvent(new Event('input'));
+        if (previewVisible) {
+          editPreview.innerHTML = md(editAnswer.value);
+          renderMermaidBlocks(editPreview);
+          addCopyButtons(editPreview);
+        }
       })
       .catch(function (err) {
         uploadStatus.textContent = '失败: ' + err.message;
@@ -530,6 +603,11 @@
     modalEl.style.maxHeight = '';
     modalEl.style.height = '';
 
+    // Reset preview to hidden
+    previewVisible = false;
+    fieldPreview.hidden = true;
+    btnPreview.textContent = '预览';
+
     if (data) {
       modalTitle.textContent = '编辑条目 #' + data.id;
       editId.value = data.id;
@@ -537,8 +615,10 @@
       editCategory.value = data.category;
       editVisibility.value = data.visibility;
       editAnswer.value = data.answer;
+      // Pre-render for when user toggles preview on
       editPreview.innerHTML = md(data.answer);
       renderMermaidBlocks(editPreview);
+      addCopyButtons(editPreview);
     } else {
       modalTitle.textContent = '新建条目';
       editId.value = '';
@@ -599,9 +679,15 @@
   // ===== Fetch & render cards =====
   function fetchCards() {
     searchStatus.innerHTML = '<span class="spinner"></span>';
-    var url = '/api/qa';
     var q = searchInput.value.trim();
-    if (q) url += '?q=' + encodeURIComponent(q);
+    var useRegex = false;
+    // Detect /pattern/ syntax for regex search
+    if (q.length > 2 && q[0] === '/' && q[q.length - 1] === '/') {
+      q = q.slice(1, -1);
+      useRegex = true;
+    }
+    var url = '/api/qa';
+    if (q) url += '?q=' + encodeURIComponent(q) + (useRegex ? '&regex=true' : '');
     var headers = {};
     if (authSecret) headers['X-Auth'] = authSecret;
     return fetch(url, { headers: headers })
@@ -662,6 +748,7 @@
 
     cardContainer.innerHTML = html;
     renderMermaidBlocks(cardContainer);
+    addCopyButtons(cardContainer);
   }
 
   function escapeHtml(str) {
@@ -726,6 +813,11 @@
               var idEl = c.querySelector('.card-id');
               if (idEl && idEl.textContent === '#' + id) {
                 c.classList.add('open');
+                // Force GIF reload
+                c.querySelectorAll('img[src$=".gif"]').forEach(function (img) {
+                  var s = img.src; img.src = '';
+                  requestAnimationFrame(function () { img.src = s; });
+                });
                 c.scrollIntoView({ behavior: 'smooth', block: 'start' });
               }
             });

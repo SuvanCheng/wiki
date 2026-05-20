@@ -19,9 +19,10 @@ import (
 
 	"qa-wiki/internal/db"
 	"qa-wiki/web"
+	"regexp"
 )
 
-var version = "1.1.0"
+var version = "1.3.0"
 
 var (
 	appSecret string
@@ -261,7 +262,34 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 
 func handleQASearch(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
-	results, err := db.Search(database, q, isAuthenticated(r))
+	useRegex := r.URL.Query().Get("regex") == "true"
+	authenticated := isAuthenticated(r)
+
+	if useRegex && q != "" {
+		re, err := regexp.Compile(q)
+		if err != nil {
+			writeJSON(w, 400, map[string]string{"error": "无效的正则表达式: " + err.Error()})
+			return
+		}
+		results, err := db.Search(database, "", authenticated)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		var filtered []db.QA
+		for _, r := range results {
+			if re.MatchString(r.Question) || re.MatchString(r.Answer) || re.MatchString(r.Category) {
+				filtered = append(filtered, r)
+			}
+		}
+		if filtered == nil {
+			filtered = []db.QA{}
+		}
+		writeJSON(w, 200, filtered)
+		return
+	}
+
+	results, err := db.Search(database, q, authenticated)
 	if err != nil {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return

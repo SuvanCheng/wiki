@@ -225,7 +225,7 @@ func GetStats(db *sql.DB, includeInternal bool) (Stats, error) {
 				}
 			}
 		}
-		limit := 15
+		limit := 100
 		if len(pairs) < limit {
 			limit = len(pairs)
 		}
