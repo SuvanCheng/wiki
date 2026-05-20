@@ -45,6 +45,96 @@
   var debounceTimer = null;
   var previewTimer = null;
 
+  // ===== Modal resize =====
+  var modalEl = document.querySelector('#editModal .modal');
+  var resizeHandle = document.getElementById('modalResizeHandle');
+  var isResizing = false;
+  var resizeStartX, resizeStartY, startWidth, startHeight;
+
+  resizeHandle.addEventListener('mousedown', function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    isResizing = true;
+    resizeStartX = e.clientX;
+    resizeStartY = e.clientY;
+    startWidth = modalEl.offsetWidth;
+    startHeight = modalEl.offsetHeight;
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'nwse-resize';
+    document.addEventListener('mousemove', onResizeMove);
+    document.addEventListener('mouseup', onResizeUp);
+  });
+
+  function onResizeMove(e) {
+    if (!isResizing) return;
+    var w = Math.max(360, Math.min(startWidth + (e.clientX - resizeStartX), window.innerWidth - 40));
+    var h = Math.max(280, Math.min(startHeight + (e.clientY - resizeStartY), window.innerHeight - 80));
+    modalEl.style.maxWidth = w + 'px';
+    modalEl.style.width = w + 'px';
+    modalEl.style.maxHeight = h + 'px';
+    modalEl.style.height = h + 'px';
+  }
+
+  function onResizeUp() {
+    if (!isResizing) return;
+    isResizing = false;
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
+    document.removeEventListener('mousemove', onResizeMove);
+    document.removeEventListener('mouseup', onResizeUp);
+    localStorage.setItem('qa_modal_size', JSON.stringify({
+      w: modalEl.style.width,
+      h: modalEl.style.height
+    }));
+  }
+
+  function applySavedModalSize() {
+    try {
+      var saved = JSON.parse(localStorage.getItem('qa_modal_size'));
+      if (saved && saved.w && saved.h) {
+        modalEl.style.maxWidth = saved.w;
+        modalEl.style.width = saved.w;
+        modalEl.style.maxHeight = saved.h;
+        modalEl.style.height = saved.h;
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  // ===== Mermaid =====
+  var mermaidReady = false;
+  function ensureMermaid() {
+    if (mermaidReady || typeof mermaid === 'undefined') return;
+    var isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: isDark ? 'dark' : 'default',
+      securityLevel: 'loose'
+    });
+    mermaidReady = true;
+  }
+
+  function renderMermaidBlocks(container) {
+    if (typeof mermaid === 'undefined') return;
+    var blocks = container.querySelectorAll('pre code.language-mermaid');
+    if (blocks.length === 0) return;
+    ensureMermaid();
+    blocks.forEach(function (code) {
+      var pre = code.parentElement;
+      var wrapper = document.createElement('div');
+      wrapper.className = 'mermaid-wrapper';
+      var div = document.createElement('div');
+      div.className = 'mermaid';
+      div.textContent = code.textContent;
+      wrapper.appendChild(div);
+      pre.replaceWith(wrapper);
+    });
+    try {
+      mermaid.run({ nodes: container.querySelectorAll('.mermaid') });
+    } catch (e) {
+      console.warn('Mermaid rendering error:', e);
+    }
+  }
+
   // ===== Auth =====
   var authSecret = sessionStorage.getItem('qa_secret') || '';
 
@@ -126,7 +216,11 @@
   applyTheme();
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
     applyTheme();
-    if (!editModal.hidden) editPreview.innerHTML = md(editAnswer.value);
+    mermaidReady = false;
+    if (!editModal.hidden) {
+      editPreview.innerHTML = md(editAnswer.value);
+      renderMermaidBlocks(editPreview);
+    }
   });
 
   // ===== Marked =====
@@ -134,7 +228,49 @@
     marked.setOptions({ breaks: true, gfm: true });
   }
   function md(text) {
-    return typeof marked !== 'undefined' ? marked.parse(text) : escapeHtml(text);
+    if (typeof marked === 'undefined') return escapeHtml(text);
+
+    // Protect math blocks from markdown parsing
+    var mathBlocks = [];
+    var mathInlines = [];
+
+    // Protect display math first: $$...$$
+    text = text.replace(/\$\$([\s\S]*?)\$\$/g, function (_, math) {
+      mathBlocks.push(math.trim());
+      return '\x00MB' + (mathBlocks.length - 1) + '\x00';
+    });
+
+    // Protect inline math: $...$ (content must not be empty or whitespace-only)
+    text = text.replace(/\$([^$\s](?:[^$]*[^$\s])?)\$/g, function (_, math) {
+      mathInlines.push(math.trim());
+      return '\x00MI' + (mathInlines.length - 1) + '\x00';
+    });
+
+    var html = marked.parse(text);
+
+    // Restore display math
+    html = html.replace(/\x00MB(\d+)\x00/g, function (_, i) {
+      var idx = parseInt(i, 10);
+      if (typeof katex !== 'undefined') {
+        try {
+          return katex.renderToString(mathBlocks[idx], { displayMode: true, throwOnError: false });
+        } catch (e) { /* fallthrough */ }
+      }
+      return '<pre><code>' + escapeHtml(mathBlocks[idx]) + '</code></pre>';
+    });
+
+    // Restore inline math
+    html = html.replace(/\x00MI(\d+)\x00/g, function (_, i) {
+      var idx = parseInt(i, 10);
+      if (typeof katex !== 'undefined') {
+        try {
+          return katex.renderToString(mathInlines[idx], { displayMode: false, throwOnError: false });
+        } catch (e) { /* fallthrough */ }
+      }
+      return '<code>' + escapeHtml(mathInlines[idx]) + '</code>';
+    });
+
+    return html;
   }
 
   // ===== Search =====
@@ -184,6 +320,7 @@
     clearTimeout(previewTimer);
     previewTimer = setTimeout(function () {
       editPreview.innerHTML = md(editAnswer.value);
+      renderMermaidBlocks(editPreview);
     }, 200);
   });
 
@@ -387,6 +524,12 @@
 
   // ===== Modal open/close =====
   function openModal(data) {
+    // Reset to CSS defaults
+    modalEl.style.maxWidth = '';
+    modalEl.style.width = '';
+    modalEl.style.maxHeight = '';
+    modalEl.style.height = '';
+
     if (data) {
       modalTitle.textContent = '编辑条目 #' + data.id;
       editId.value = data.id;
@@ -395,6 +538,7 @@
       editVisibility.value = data.visibility;
       editAnswer.value = data.answer;
       editPreview.innerHTML = md(data.answer);
+      renderMermaidBlocks(editPreview);
     } else {
       modalTitle.textContent = '新建条目';
       editId.value = '';
@@ -405,6 +549,10 @@
       editPreview.innerHTML = '';
     }
     editModal.hidden = false;
+
+    // Apply user's saved size preference
+    applySavedModalSize();
+
     editQuestion.focus();
   }
 
@@ -513,6 +661,7 @@
     });
 
     cardContainer.innerHTML = html;
+    renderMermaidBlocks(cardContainer);
   }
 
   function escapeHtml(str) {

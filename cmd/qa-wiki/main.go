@@ -21,7 +21,7 @@ import (
 	"qa-wiki/web"
 )
 
-var version = "1.0.0"
+var version = "1.1.0"
 
 var (
 	appSecret string

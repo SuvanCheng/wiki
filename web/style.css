@@ -392,6 +392,7 @@ body {
   max-width: min(900px, 70vw);
   max-height: calc(100vh - 80px);
   overflow-y: auto;
+  position: relative;
 }
 
 .modal-header {
@@ -469,6 +470,39 @@ body {
 .version-value { font-size: 0.72rem; font-weight: 600; color: var(--text-secondary); font-family: var(--font-mono); }
 
 .shortcut-hint { font-size: 0.65rem; color: var(--text-muted); }
+
+/* ===== Modal resize handle ===== */
+.modal-resize-handle {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 20px;
+  height: 20px;
+  cursor: nwse-resize;
+  z-index: 10;
+}
+.modal-resize-handle::after {
+  content: '';
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--text-muted);
+  border-bottom: 2px solid var(--text-muted);
+}
+
+/* ===== Mermaid & KaTeX ===== */
+.mermaid-wrapper {
+  margin: 12px 0;
+  overflow-x: auto;
+}
+.mermaid-wrapper svg {
+  max-width: 100%;
+  height: auto;
+}
+.katex-display { overflow-x: auto; overflow-y: hidden; }
+.katex { font-size: 1.05em; }
 
 /* ===== Responsive ===== */
 @media (max-width: 800px) {

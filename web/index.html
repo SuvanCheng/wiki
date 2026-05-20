@@ -6,6 +6,7 @@
 <title>QA Wiki</title>
 <link rel="stylesheet" href="/lib/github-markdown-light.css" id="github-md-light">
 <link rel="stylesheet" href="/lib/github-markdown-dark.css" id="github-md-dark" disabled>
+<link rel="stylesheet" href="/lib/katex.min.css">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -123,6 +124,7 @@
       <div class="field-preview">
         <div class="field-label">预览</div>
         <div id="editPreview" class="markdown-body preview-box"></div>
+      <div id="modalResizeHandle" class="modal-resize-handle"></div>
       </div>
       <div class="modal-actions">
         <button type="button" id="btnModalCancel" class="btn btn-secondary">取消</button>
@@ -133,6 +135,8 @@
 </div>
 
 <script src="/lib/marked.min.js"></script>
+<script src="/lib/mermaid.min.js"></script>
+<script src="/lib/katex.min.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

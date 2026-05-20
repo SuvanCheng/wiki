@@ -23,6 +23,20 @@ curl -fsSLo "$LIB_DIR/github-markdown-dark.css" \
   "https://cdn.jsdelivr.net/npm/github-markdown-css/github-markdown-dark.css"
 echo "  ✓ github-markdown-dark.css"
 
+# mermaid.js - Diagram rendering
+curl -fsSLo "$LIB_DIR/mermaid.min.js" \
+  "https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"
+echo "  ✓ mermaid.min.js"
+
+# katex - Math formula rendering
+curl -fsSLo "$LIB_DIR/katex.min.js" \
+  "https://cdn.jsdelivr.net/npm/katex/dist/katex.min.js"
+echo "  ✓ katex.min.js"
+
+curl -fsSLo "$LIB_DIR/katex.min.css" \
+  "https://cdn.jsdelivr.net/npm/katex/dist/katex.min.css"
+echo "  ✓ katex.min.css"
+
 echo ""
 echo "依赖下载完成。文件列表:"
 ls -lh "$LIB_DIR"
