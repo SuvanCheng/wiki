@@ -50,3 +50,10 @@ go: downloading golang.org/x/mod v0.14.0
 
 go run ./cmd/qa-wiki
 bash build.sh
+
+  之后每次发版，手动打对应版本号的 tag 即可：
+  git tag v1.10.0
+  bash build.sh
+  
+  或者编译时直接指定版本绕过 tag：
+  QA_VERSION=1.9.0 bash build.sh
