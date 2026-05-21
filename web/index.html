@@ -113,8 +113,7 @@
           <span>答案（Markdown） <span class="required">*</span></span>
           <span>
             <small class="shortcut-hint">快捷键: B粗 I斜 K链 `码 H标题 U列表 Shift+S删线 Shift+K代码块 Shift+X任务 &gt;引用 Ctrl+-分隔线</small>
-            <button type="button" id="btnPreview" class="btn-sm" style="font-size:0.75rem;margin-left:8px">预览</button>
-            <button type="button" id="btnUpload" class="btn-sm" style="font-size:0.75rem;margin-left:4px">上传文件</button>
+            <button type="button" id="btnUpload" class="btn-sm" style="font-size:0.75rem;margin-left:8px">上传文件</button>
             <input type="file" id="fileInput" accept="*/*" style="display:none">
             <span id="uploadStatus" class="upload-status"></span>
           </span>
@@ -128,6 +127,8 @@
       <div id="modalResizeHandle" class="modal-resize-handle"></div>
       </div>
       <div class="modal-actions">
+        <button type="button" id="btnPreview" class="btn btn-secondary">预览</button>
+        <span style="flex:1"></span>
         <button type="button" id="btnModalCancel" class="btn btn-secondary">取消</button>
         <button type="submit" class="btn btn-primary">保存</button>
       </div>

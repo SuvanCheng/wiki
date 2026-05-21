@@ -14,6 +14,7 @@ type QA struct {
 	Answer     string `json:"answer"`
 	Category   string `json:"category"`
 	Visibility string `json:"visibility"`
+	CreatedAt  string `json:"created_at"`
 	UpdatedAt  string `json:"updated_at"`
 }
 
@@ -49,10 +50,17 @@ func InitSchema(db *sql.DB) error {
 			answer TEXT NOT NULL DEFAULT '',
 			category TEXT NOT NULL DEFAULT '',
 			visibility TEXT NOT NULL DEFAULT 'internal' CHECK(visibility IN ('internal', 'public')),
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+	// Migrate: add created_at to older databases, backfill from updated_at
+	db.Exec("ALTER TABLE questions ADD COLUMN created_at DATETIME")
+	db.Exec("UPDATE questions SET created_at = updated_at WHERE created_at IS NULL")
+	return nil
 }
 
 func Count(db *sql.DB) (int, error) {
@@ -62,6 +70,7 @@ func Count(db *sql.DB) (int, error) {
 }
 
 func InsertMockData(db *sql.DB) error {
+	now := time.Now().Format(time.RFC3339)
 	mocks := []QA{
 		{
 			Question:   "公司内部服务器 IP 地址和访问凭证是什么？",
@@ -85,8 +94,8 @@ func InsertMockData(db *sql.DB) error {
 
 	for _, m := range mocks {
 		_, err := db.Exec(
-			"INSERT INTO questions (question, answer, category, visibility, updated_at) VALUES (?, ?, ?, ?, ?)",
-			m.Question, m.Answer, m.Category, m.Visibility, time.Now().Format(time.RFC3339),
+			"INSERT INTO questions (question, answer, category, visibility, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+			m.Question, m.Answer, m.Category, m.Visibility, now, now,
 		)
 		if err != nil {
 			return err
@@ -98,16 +107,18 @@ func InsertMockData(db *sql.DB) error {
 func GetByID(db *sql.DB, id int) (QA, error) {
 	var q QA
 	err := db.QueryRow(
-		"SELECT id, question, answer, category, visibility, updated_at FROM questions WHERE id = ?", id,
-	).Scan(&q.ID, &q.Question, &q.Answer, &q.Category, &q.Visibility, &q.UpdatedAt)
+		"SELECT id, question, answer, category, visibility, created_at, updated_at FROM questions WHERE id = ?", id,
+	).Scan(&q.ID, &q.Question, &q.Answer, &q.Category, &q.Visibility, &q.CreatedAt, &q.UpdatedAt)
 	return q, err
 }
 
 func Insert(db *sql.DB, q *QA) error {
-	q.UpdatedAt = time.Now().Format(time.RFC3339)
+	now := time.Now().Format(time.RFC3339)
+	q.CreatedAt = now
+	q.UpdatedAt = now
 	result, err := db.Exec(
-		"INSERT INTO questions (question, answer, category, visibility, updated_at) VALUES (?, ?, ?, ?, ?)",
-		q.Question, q.Answer, q.Category, q.Visibility, q.UpdatedAt,
+		"INSERT INTO questions (question, answer, category, visibility, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+		q.Question, q.Answer, q.Category, q.Visibility, q.CreatedAt, q.UpdatedAt,
 	)
 	if err != nil {
 		return err
@@ -138,7 +149,7 @@ func Search(db *sql.DB, keyword string, includeInternal bool) ([]QA, error) {
 	var rows *sql.Rows
 	var err error
 
-	baseQuery := "SELECT id, question, answer, category, visibility, updated_at FROM questions"
+	baseQuery := "SELECT id, question, answer, category, visibility, created_at, updated_at FROM questions"
 	orderClause := " ORDER BY updated_at DESC"
 
 	if keyword == "" {
@@ -163,7 +174,7 @@ func Search(db *sql.DB, keyword string, includeInternal bool) ([]QA, error) {
 	var results []QA
 	for rows.Next() {
 		var q QA
-		if err := rows.Scan(&q.ID, &q.Question, &q.Answer, &q.Category, &q.Visibility, &q.UpdatedAt); err != nil {
+		if err := rows.Scan(&q.ID, &q.Question, &q.Answer, &q.Category, &q.Visibility, &q.CreatedAt, &q.UpdatedAt); err != nil {
 			return nil, err
 		}
 		results = append(results, q)
@@ -238,7 +249,7 @@ func GetStats(db *sql.DB, includeInternal bool) (Stats, error) {
 	}
 
 	// recent 5
-	recentQuery := "SELECT id, question, answer, category, visibility, updated_at FROM questions"
+	recentQuery := "SELECT id, question, answer, category, visibility, created_at, updated_at FROM questions"
 	if !includeInternal {
 		recentQuery += " WHERE visibility = 'public'"
 	}
@@ -248,7 +259,7 @@ func GetStats(db *sql.DB, includeInternal bool) (Stats, error) {
 		defer recRows.Close()
 		for recRows.Next() {
 			var q QA
-			if err := recRows.Scan(&q.ID, &q.Question, &q.Answer, &q.Category, &q.Visibility, &q.UpdatedAt); err == nil {
+			if err := recRows.Scan(&q.ID, &q.Question, &q.Answer, &q.Category, &q.Visibility, &q.CreatedAt, &q.UpdatedAt); err == nil {
 				s.Recent = append(s.Recent, q)
 			}
 		}

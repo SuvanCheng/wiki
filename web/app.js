@@ -343,6 +343,22 @@
       deleteEntry(parseInt(btnDel.getAttribute('data-id'), 10));
       return;
     }
+    var btnCopy = e.target.closest('.btn-copy-qa');
+    if (btnCopy) {
+      e.stopPropagation(); e.preventDefault();
+      var cardEl = btnCopy.closest('.card');
+      var q = cardEl.querySelector('.card-question').textContent;
+      var bodyEl = cardEl.querySelector('.markdown-body');
+      var a = bodyEl ? bodyEl.textContent : '';
+      navigator.clipboard.writeText('# ' + q + '\n\n' + a).then(function () {
+        btnCopy.textContent = '已复制';
+        setTimeout(function () { btnCopy.textContent = '复制QA'; }, 1500);
+      }).catch(function () {
+        btnCopy.textContent = '失败';
+        setTimeout(function () { btnCopy.textContent = '复制QA'; }, 1500);
+      });
+      return;
+    }
     var header = e.target.closest('.card-header');
     if (header && !e.target.closest('button')) {
       var card = header.closest('.card');
@@ -375,15 +391,20 @@
 
 
   // ===== Preview toggle =====
+  var fieldAnswer = document.querySelector('.field-answer');
   btnPreview.addEventListener('click', function () {
     previewVisible = !previewVisible;
     if (previewVisible) {
+      fieldAnswer.style.display = 'none';
+      fieldPreview.classList.add('preview-expanded');
       fieldPreview.hidden = false;
-      btnPreview.textContent = '隐藏预览';
+      btnPreview.textContent = '编辑';
       editPreview.innerHTML = md(editAnswer.value);
       renderMermaidBlocks(editPreview);
       addCopyButtons(editPreview);
     } else {
+      fieldAnswer.style.display = '';
+      fieldPreview.classList.remove('preview-expanded');
       fieldPreview.hidden = true;
       btnPreview.textContent = '预览';
     }
@@ -603,8 +624,10 @@
     modalEl.style.maxHeight = '';
     modalEl.style.height = '';
 
-    // Reset preview to hidden
+    // Reset preview to hidden, show textarea
     previewVisible = false;
+    fieldAnswer.style.display = '';
+    fieldPreview.classList.remove('preview-expanded');
     fieldPreview.hidden = true;
     btnPreview.textContent = '预览';
 
@@ -721,12 +744,21 @@
         });
       }
 
-      var actionsHtml = '';
+      var actionsHtml = '<div class="card-actions">' +
+        '<button class="btn-sm btn-copy-qa" data-id="' + item.id + '">复制QA</button>';
       if (admin) {
-        actionsHtml = '<div class="card-actions">' +
+        actionsHtml +=
           '<button class="btn-sm btn-edit" data-id="' + item.id + '">编辑</button>' +
-          '<button class="btn-sm btn-delete" data-id="' + item.id + '">删除</button>' +
-        '</div>';
+          '<button class="btn-sm btn-delete" data-id="' + item.id + '">删除</button>';
+      }
+      actionsHtml += '</div>';
+
+      var datesHtml = '';
+      if (item.created_at || item.updated_at) {
+        datesHtml = '<div class="card-dates">';
+        if (item.created_at) datesHtml += '<span>创建: ' + formatDate(item.created_at) + '</span>';
+        if (item.updated_at) datesHtml += '<span>更新: ' + formatDate(item.updated_at) + '</span>';
+        datesHtml += '</div>';
       }
 
       html +=
@@ -742,6 +774,7 @@
           '</div>' +
           '<div class="card-body">' +
             '<div class="markdown-body">' + answerHTML + '</div>' +
+            datesHtml +
           '</div>' +
         '</div>';
     });
@@ -755,6 +788,19 @@
     var div = document.createElement('div');
     div.appendChild(document.createTextNode(str));
     return div.innerHTML;
+  }
+
+  function formatDate(isoStr) {
+    if (!isoStr) return '';
+    try {
+      var d = new Date(isoStr);
+      if (isNaN(d.getTime())) return isoStr;
+      return d.getFullYear() + '-' +
+        String(d.getMonth() + 1).padStart(2, '0') + '-' +
+        String(d.getDate()).padStart(2, '0') + ' ' +
+        String(d.getHours()).padStart(2, '0') + ':' +
+        String(d.getMinutes()).padStart(2, '0');
+    } catch (e) { return isoStr; }
   }
 
   // ===== Sidebar: stats =====
