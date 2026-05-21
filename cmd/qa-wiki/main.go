@@ -2,19 +2,24 @@ package main
 
 import (
 	"archive/zip"
+	"context"
 	"database/sql"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"qa-wiki/internal/db"
@@ -22,7 +27,7 @@ import (
 	"regexp"
 )
 
-var version = "1.5.0"
+var version = "1.8.0"
 
 var (
 	appSecret string
@@ -30,15 +35,17 @@ var (
 	filesDir  string
 	dbMu      sync.Mutex
 	database  *sql.DB
+	verbose   bool
 )
 
 func main() {
+	flag.BoolVar(&verbose, "v", false, "详细调试输出")
+	flag.Parse()
+
 	appSecret = os.Getenv("QA_SECRET")
 	if appSecret == "" {
 		appSecret = "hygon123;"
 	}
-	fmt.Printf("QA Wiki v%s  管理密钥: %s\n", version, appSecret)
-
 	dbPath = resolveDBPath()
 	filesDir = filepath.Join(filepath.Dir(dbPath), "files")
 	os.MkdirAll(filesDir, 0755)
@@ -58,11 +65,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("查询数据库失败: %v", err)
 	}
+	debugf("数据库现有 %d 条记录", count)
 	if count == 0 {
 		if err := db.InsertMockData(database); err != nil {
 			log.Fatalf("写入 Mock 数据失败: %v", err)
 		}
 		fmt.Println("已写入 3 条 Mock 数据")
+		debugf("已写入 3 条 Mock 数据")
 	}
 
 	mux := http.NewServeMux()
@@ -147,18 +156,62 @@ func main() {
 
 	mux.Handle("/", http.FileServer(http.FS(web.FS)))
 
-	addr := "127.0.0.1:8080"
-	url := "http://" + addr
+	addr := "0.0.0.0:11799"
+	if envAddr := os.Getenv("QA_ADDR"); envAddr != "" {
+		if !strings.Contains(envAddr, ":") {
+			envAddr = "0.0.0.0:" + envAddr
+		}
+		addr = envAddr
+	}
+	_, port, _ := strings.Cut(strings.TrimPrefix(addr, "0.0.0.0:"), ":")
+	if port == "" {
+		port = "11799"
+	}
+	localURL := "http://127.0.0.1:" + port
+	fmt.Printf("QA Wiki %s  管理密钥: %s\n", version, appSecret)
+	fmt.Printf("本地访问: %s\n", localURL)
+
+	if verbose {
+		debugf("监听地址: %s, 端口: %s", addr, port)
+		debugf("数据库路径: %s", dbPath)
+		debugf("文件存储: %s", filesDir)
+		listInterfaces()
+	}
+
+	fmt.Printf("局域网访问: http://<服务器IP>:%s\n", port)
+	fmt.Println("按 Ctrl+C 退出")
 
 	go func() {
-		if err := openBrowser(url); err != nil {
-			fmt.Printf("无法自动打开浏览器，请手动访问 %s\n", url)
+		if err := openBrowser(localURL); err != nil {
+			fmt.Printf("无法自动打开浏览器，请手动访问 %s\n", localURL)
 		}
 	}()
 
-	fmt.Printf("QA Wiki 已启动: %s\n", url)
-	fmt.Println("按 Ctrl+C 退出")
-	log.Fatal(http.ListenAndServe(addr, mux))
+	var handler http.Handler = mux
+	if verbose {
+		handler = loggingMiddleware(mux)
+	}
+
+	ln, err := listen(addr)
+	if err != nil {
+		log.Fatalf("监听失败: %v", err)
+	}
+	debugf("服务已启动: %s", ln.Addr())
+
+	// Graceful shutdown on SIGINT / SIGTERM
+	idle := &http.Server{Handler: handler}
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		sig := <-sigCh
+		debugf("收到信号 %v，正在关闭...", sig)
+		idle.Shutdown(context.Background())
+	}()
+
+	if err := idle.Serve(ln); err != http.ErrServerClosed {
+		log.Fatal(err)
+	}
+	fmt.Println("服务已关闭")
 }
 
 func resolveDBPath() string {
@@ -188,6 +241,50 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
+}
+
+func debugf(format string, args ...interface{}) {
+	if verbose {
+		log.Printf("[DEBUG] "+format, args...)
+	}
+}
+
+func listInterfaces() {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		debugf("获取网络接口失败: %v", err)
+		return
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			ipnet, ok := a.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			if ipnet.IP.IsLoopback() {
+				continue
+			}
+			if ip4 := ipnet.IP.To4(); ip4 != nil {
+				debugf("网卡 %s (%s): %s", iface.Name, iface.HardwareAddr, ip4.String())
+			}
+		}
+	}
+}
+
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		debugf("=> %s %s 来源: %s", r.Method, r.URL.RequestURI(), r.RemoteAddr)
+		next.ServeHTTP(w, r)
+		debugf("<= %s %s 耗时: %v", r.Method, r.URL.RequestURI(), time.Since(start))
+	})
 }
 
 // ----- Auth -----
@@ -425,16 +522,25 @@ func handleDBImport(w http.ResponseWriter, r *http.Request) {
 	}
 	defer uploadedFile.Close()
 
+	mode := r.FormValue("mode")
+	if mode == "" {
+		mode = "overwrite"
+	}
+	conflict := r.FormValue("conflict")
+	if conflict == "" {
+		conflict = "overwrite"
+	}
+
 	filename := strings.ToLower(header.Filename)
 
 	if strings.HasSuffix(filename, ".zip") {
-		handleDBImportZip(w, r, uploadedFile, header.Filename)
+		handleDBImportZip(w, r, uploadedFile, header.Filename, mode, conflict)
 	} else {
-		handleDBImportRaw(w, r, uploadedFile, header.Filename)
+		handleDBImportRaw(w, r, uploadedFile, header.Filename, mode, conflict)
 	}
 }
 
-func handleDBImportZip(w http.ResponseWriter, r *http.Request, uploadedFile io.Reader, originalName string) {
+func handleDBImportZip(w http.ResponseWriter, r *http.Request, uploadedFile io.Reader, originalName string, mode string, conflict string) {
 	// Save zip to temp file so we can read it with archive/zip
 	tmpZip, err := os.Create(dbPath + ".import.zip")
 	if err != nil {
@@ -457,13 +563,11 @@ func handleDBImportZip(w http.ResponseWriter, r *http.Request, uploadedFile io.R
 	}
 	defer zr.Close()
 
-	var dbEntry, filesPrefix string
+	var dbEntry string
 	for _, f := range zr.File {
 		if f.Name == "data.db" {
 			dbEntry = f.Name
-		}
-		if strings.HasPrefix(f.Name, "files/") && filesPrefix == "" {
-			filesPrefix = "files/"
+			break
 		}
 	}
 	if dbEntry == "" {
@@ -493,7 +597,43 @@ func handleDBImportZip(w http.ResponseWriter, r *http.Request, uploadedFile io.R
 		return
 	}
 
-	// Swap databases
+	// Checkpoint WAL before modifying
+	dbMu.Lock()
+	database.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	dbMu.Unlock()
+
+	if mode == "merge" {
+		// Merge entries from import DB into current DB
+		merged, err := mergeImportedDB(tmpDBPath, conflict)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": "合并失败: " + err.Error()})
+			return
+		}
+
+		// Merge files (skip existing)
+		filesMerged := 0
+		for _, f := range zr.File {
+			if strings.HasPrefix(f.Name, "files/") && !f.FileInfo().IsDir() {
+				destPath := filepath.Join(filesDir, strings.TrimPrefix(f.Name, "files/"))
+				if _, err := os.Stat(destPath); os.IsNotExist(err) {
+					os.MkdirAll(filepath.Dir(destPath), 0755)
+					if err := extractZipFile(zr, f.Name, destPath); err == nil {
+						filesMerged++
+					}
+				}
+			}
+		}
+
+		writeJSON(w, 200, map[string]string{
+			"ok":             "merged",
+			"name":           originalName,
+			"mergedEntries":  fmt.Sprintf("%d", merged),
+			"filesExtracted": fmt.Sprintf("%d", filesMerged),
+		})
+		return
+	}
+
+	// Overwrite mode: swap databases
 	backupPath := dbPath + ".backup"
 	dbMu.Lock()
 	oldDB := database
@@ -551,7 +691,7 @@ func handleDBImportZip(w http.ResponseWriter, r *http.Request, uploadedFile io.R
 	})
 }
 
-func handleDBImportRaw(w http.ResponseWriter, r *http.Request, uploadedFile io.Reader, originalName string) {
+func handleDBImportRaw(w http.ResponseWriter, r *http.Request, uploadedFile io.Reader, originalName string, mode string, conflict string) {
 	tmpPath := dbPath + ".import"
 	dst, err := os.Create(tmpPath)
 	if err != nil {
@@ -580,6 +720,26 @@ func handleDBImportRaw(w http.ResponseWriter, r *http.Request, uploadedFile io.R
 		return
 	}
 
+	// Checkpoint WAL before modifying
+	dbMu.Lock()
+	database.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	dbMu.Unlock()
+
+	if mode == "merge" {
+		merged, err := mergeImportedDB(tmpPath, conflict)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": "合并失败: " + err.Error()})
+			return
+		}
+		writeJSON(w, 200, map[string]string{
+			"ok":            "merged",
+			"name":          originalName,
+			"mergedEntries": fmt.Sprintf("%d", merged),
+		})
+		return
+	}
+
+	// Overwrite mode
 	backupPath := dbPath + ".backup"
 	dbMu.Lock()
 	oldDB := database
@@ -622,6 +782,57 @@ func handleDBImportRaw(w http.ResponseWriter, r *http.Request, uploadedFile io.R
 		"name":   originalName,
 		"backup": backupPath,
 	})
+}
+
+func mergeImportedDB(importPath string, conflict string) (int, error) {
+	importDB, err := db.Open(importPath)
+	if err != nil {
+		return 0, fmt.Errorf("打开导入数据库失败: %w", err)
+	}
+	defer importDB.Close()
+
+	rows, err := importDB.Query("SELECT id, question, answer, category, visibility, created_at, updated_at FROM questions ORDER BY id")
+	if err != nil {
+		return 0, fmt.Errorf("读取导入数据库失败: %w", err)
+	}
+	defer rows.Close()
+
+	dbMu.Lock()
+	defer dbMu.Unlock()
+
+	count := 0
+	for rows.Next() {
+		var q db.QA
+		if err := rows.Scan(&q.ID, &q.Question, &q.Answer, &q.Category, &q.Visibility, &q.CreatedAt, &q.UpdatedAt); err != nil {
+			continue
+		}
+
+		var execErr error
+		switch conflict {
+		case "skip":
+			// INSERT OR IGNORE: skip if ID already exists (keep local)
+			_, execErr = database.Exec(
+				"INSERT OR IGNORE INTO questions (id, question, answer, category, visibility, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+				q.ID, q.Question, q.Answer, q.Category, q.Visibility, q.CreatedAt, q.UpdatedAt,
+			)
+		case "append":
+			// Always insert as new entry, ignore imported ID
+			_, execErr = database.Exec(
+				"INSERT INTO questions (question, answer, category, visibility, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+				q.Question, q.Answer, q.Category, q.Visibility, q.CreatedAt, q.UpdatedAt,
+			)
+		default:
+			// "overwrite": INSERT OR REPLACE (import wins)
+			_, execErr = database.Exec(
+				"INSERT OR REPLACE INTO questions (id, question, answer, category, visibility, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+				q.ID, q.Question, q.Answer, q.Category, q.Visibility, q.CreatedAt, q.UpdatedAt,
+			)
+		}
+		if execErr == nil {
+			count++
+		}
+	}
+	return count, rows.Err()
 }
 
 func extractZipFile(zr *zip.ReadCloser, name, destPath string) error {

@@ -67,7 +67,20 @@
       <h3 class="sidebar-heading">数据管理</h3>
       <div class="db-actions">
         <button id="btnExport" class="btn btn-secondary btn-block">导出全部数据 (.zip)</button>
-        <button id="btnImport" class="btn btn-secondary btn-block">导入数据 (.zip 或 .db)</button>
+        <div class="import-row">
+          <select id="importMode" class="field-input" style="font-size:0.72rem;padding:4px 6px;flex:1">
+            <option value="overwrite">覆盖导入</option>
+            <option value="merge">合并导入</option>
+          </select>
+          <button id="btnImport" class="btn btn-secondary" style="flex:1;font-size:0.78rem;padding:6px 10px">导入 (.zip/.db)</button>
+        </div>
+        <div id="conflictRow" style="display:none">
+          <select id="conflictStrategy" class="field-input" style="font-size:0.72rem;padding:4px 6px;width:100%">
+            <option value="skip">ID冲突：跳过（保留本地）</option>
+            <option value="overwrite">ID冲突：覆盖（导入优先）</option>
+            <option value="append">忽略ID：全部追加为新条目</option>
+          </select>
+        </div>
         <input type="file" id="dbFileInput" accept=".zip,.db" style="display:none">
         <span id="importStatus" class="upload-status"></span>
       </div>
@@ -112,7 +125,7 @@
         <div class="field-label-row">
           <span>答案（Markdown） <span class="required">*</span></span>
           <span>
-            <small class="shortcut-hint">快捷键: B粗 I斜 K链 `码 H标题 U列表 Shift+S删线 Shift+K代码块 Shift+X任务 &gt;引用 Ctrl+-分隔线</small>
+            <small class="shortcut-hint">快捷键: B粗 I斜 K链 `码 H标题 U列表 Shift+S删线 Shift+K代码块 Shift+X任务 &gt;引用 M图表 Shift+M公式 Ctrl+-分隔线</small>
             <button type="button" id="btnUpload" class="btn-sm" style="font-size:0.75rem;margin-left:8px">上传文件</button>
             <input type="file" id="fileInput" accept="*/*" style="display:none">
             <span id="uploadStatus" class="upload-status"></span>

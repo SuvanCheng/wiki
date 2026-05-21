@@ -23,6 +23,9 @@
 
   var btnExport = document.getElementById('btnExport');
   var btnImport = document.getElementById('btnImport');
+  var importMode = document.getElementById('importMode');
+  var conflictRow = document.getElementById('conflictRow');
+  var conflictStrategy = document.getElementById('conflictStrategy');
   var dbFileInput = document.getElementById('dbFileInput');
   var importStatus = document.getElementById('importStatus');
 
@@ -489,6 +492,20 @@
         // Ctrl+Shift+B: blockquote
         insertAtLineStart(ta, lineStart, '> ');
       }
+    } else if ((e.key === 'm' || e.key === 'M') && e.shiftKey) {
+      // Display math formula (Ctrl+Shift+M)
+      if (sel) {
+        wrapSelection(ta, '$$\n', '\n$$');
+      } else {
+        insertText(ta, '\n$$\n\n$$\n');
+      }
+    } else if (e.key === 'm' || e.key === 'M') {
+      // Mermaid diagram (Ctrl+M)
+      if (sel) {
+        wrapSelection(ta, '```mermaid\n', '\n```');
+      } else {
+        insertText(ta, '\n```mermaid\ngraph TD\n  A --> B\n```\n');
+      }
     } else if (e.key === '-' && e.shiftKey) {
       // Horizontal rule (Ctrl+Shift+-)
       insertText(ta, '\n---\n');
@@ -904,9 +921,23 @@
       .catch(function (err) { alert('导出失败: ' + err.message); });
   });
 
+  // Show/hide conflict strategy based on import mode
+  importMode.addEventListener('change', function () {
+    conflictRow.style.display = importMode.value === 'merge' ? '' : 'none';
+  });
+
   btnImport.addEventListener('click', function () {
     if (!isAdmin()) return;
-    if (!confirm('导入将替换当前全部数据和文件，建议先导出备份。确定继续？')) return;
+    var mode = importMode.value;
+    var msg;
+    if (mode === 'overwrite') {
+      msg = '覆盖模式将替换当前全部数据和文件，建议先导出备份。确定继续？';
+    } else {
+      var strategy = conflictStrategy.value;
+      var strategyLabel = conflictStrategy.options[conflictStrategy.selectedIndex].text;
+      msg = '合并模式 — ' + strategyLabel + '\n\n确定继续？';
+    }
+    if (!confirm(msg)) return;
     dbFileInput.click();
   });
 
@@ -916,6 +947,10 @@
     importStatus.textContent = '导入中...';
     var fd = new FormData();
     fd.append('file', file);
+    fd.append('mode', importMode.value);
+    if (importMode.value === 'merge') {
+      fd.append('conflict', conflictStrategy.value);
+    }
 
     fetch('/api/db/import', { method: 'POST', headers: { 'X-Auth': authSecret }, body: fd })
       .then(function (res) {
@@ -923,9 +958,17 @@
         return res.json();
       })
       .then(function (data) {
-        var msg = '导入成功';
-        if (data.filesExtracted && data.filesExtracted > 0) {
-          msg += '（含 ' + data.filesExtracted + ' 个文件）';
+        var msg;
+        if (data.ok === 'merged') {
+          msg = '合并完成（' + (data.mergedEntries || 0) + ' 条）';
+          if (data.filesExtracted && data.filesExtracted > 0) {
+            msg += '，含 ' + data.filesExtracted + ' 个文件';
+          }
+        } else {
+          msg = '覆盖导入成功';
+          if (data.filesExtracted && data.filesExtracted > 0) {
+            msg += '（含 ' + data.filesExtracted + ' 个文件）';
+          }
         }
         importStatus.textContent = msg;
         fetchCards();

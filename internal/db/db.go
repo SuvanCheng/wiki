@@ -86,7 +86,7 @@ func InsertMockData(db *sql.DB) error {
 		},
 		{
 			Question:   "项目如何部署？",
-			Answer:     "## 部署步骤\n\n1. **构建二进制**\n   ```bash\n   CGO_ENABLED=0 go build -o qa-wiki ./cmd/qa-wiki\n   ```\n\n2. **准备数据文件**\n   - 将 `data.db` 放在与可执行文件同级目录\n   - 确保数据库文件有读写权限\n\n3. **启动服务**\n   ```bash\n   ./qa-wiki\n   ```\n\n4. **验证**\n   - 浏览器会自动打开 `http://127.0.0.1:8080`\n   - 确认页面正常加载，搜索功能可用\n\n## 运行环境要求\n\n| 平台 | 最低版本 |\n|------|----------|\n| macOS | 11+ (Intel / Apple Silicon) |\n| Windows | 10+ (x86_64) |\n| Linux | Kernel 3.10+ (x86_64) |\n\n> 无需安装任何运行时依赖，二进制文件即为完整应用。",
+			Answer:     "## 部署步骤\n\n1. **构建二进制**\n   ```bash\n   CGO_ENABLED=0 go build -o qa-wiki ./cmd/qa-wiki\n   ```\n\n2. **准备数据文件**\n   - 将 `data.db` 放在与可执行文件同级目录\n   - 确保数据库文件有读写权限\n\n3. **启动服务**\n   ```bash\n   ./qa-wiki\n   ```\n\n4. **验证**\n   - 浏览器会自动打开 `http://127.0.0.1:11799`\n   - 确认页面正常加载，搜索功能可用\n\n## 运行环境要求\n\n| 平台 | 最低版本 |\n|------|----------|\n| macOS | 11+ (Intel / Apple Silicon) |\n| Windows | 10+ (x86_64) |\n| Linux | Kernel 3.10+ (x86_64) |\n\n> 无需安装任何运行时依赖，二进制文件即为完整应用。",
 			Category:   "运维",
 			Visibility: "public",
 		},
