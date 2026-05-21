@@ -367,6 +367,8 @@
       var card = header.closest('.card');
       card.classList.toggle('open');
       if (card.classList.contains('open')) {
+        renderMermaidBlocks(card);
+        addCopyButtons(card);
         // Force GIFs to restart animation when card opens
         card.querySelectorAll('img[src$=".gif"]').forEach(function (img) {
           var src = img.src;
@@ -797,7 +799,6 @@
     });
 
     cardContainer.innerHTML = html;
-    renderMermaidBlocks(cardContainer);
     addCopyButtons(cardContainer);
   }
 
@@ -876,6 +877,8 @@
               var idEl = c.querySelector('.card-id');
               if (idEl && idEl.textContent === '#' + id) {
                 c.classList.add('open');
+                renderMermaidBlocks(c);
+                addCopyButtons(c);
                 // Force GIF reload
                 c.querySelectorAll('img[src$=".gif"]').forEach(function (img) {
                   var s = img.src; img.src = '';
