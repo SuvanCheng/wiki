@@ -49,6 +49,7 @@
 
   var debounceTimer = null;
   var previewVisible = false;
+  var formDirty = false;
 
   // ===== Modal resize =====
   var modalEl = document.querySelector('#editModal .modal');
@@ -140,6 +141,44 @@
     }
   }
 
+  // ===== Shared copy helper (supports HTTP non-secure contexts) =====
+  function copyText(text, btn, cssClass) {
+    function done(msg) {
+      btn.textContent = msg;
+      if (msg === '已复制' && cssClass) btn.classList.add(cssClass);
+      setTimeout(function () {
+        btn.textContent = '复制';
+        if (cssClass) btn.classList.remove(cssClass);
+      }, 1500);
+    }
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        done('已复制');
+      }).catch(function () {
+        execFallback();
+      });
+    } else {
+      execFallback();
+    }
+
+    function execFallback() {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+        done('已复制');
+      } catch (err) {
+        done('失败');
+      }
+      document.body.removeChild(ta);
+    }
+  }
+
   // ===== Code copy buttons =====
   function addCopyButtons(container) {
     container.querySelectorAll('.markdown-body pre').forEach(function (pre) {
@@ -151,17 +190,7 @@
         e.stopPropagation();
         var code = pre.querySelector('code');
         var text = code ? code.textContent : pre.textContent;
-        navigator.clipboard.writeText(text).then(function () {
-          btn.textContent = '已复制';
-          btn.classList.add('copied');
-          setTimeout(function () {
-            btn.textContent = '复制';
-            btn.classList.remove('copied');
-          }, 1500);
-        }).catch(function () {
-          btn.textContent = '失败';
-          setTimeout(function () { btn.textContent = '复制'; }, 1500);
-        });
+        copyText(text, btn, 'copied');
       });
       pre.appendChild(btn);
     });
@@ -352,14 +381,14 @@
       var cardEl = btnCopy.closest('.card');
       var q = cardEl.querySelector('.card-question').textContent;
       var bodyEl = cardEl.querySelector('.markdown-body');
-      var a = bodyEl ? bodyEl.textContent : '';
-      navigator.clipboard.writeText('# ' + q + '\n\n' + a).then(function () {
-        btnCopy.textContent = '已复制';
-        setTimeout(function () { btnCopy.textContent = '复制QA'; }, 1500);
-      }).catch(function () {
-        btnCopy.textContent = '失败';
-        setTimeout(function () { btnCopy.textContent = '复制QA'; }, 1500);
-      });
+      var a = '';
+      if (bodyEl) {
+        var clone = bodyEl.cloneNode(true);
+        clone.querySelectorAll('.btn-copy').forEach(function (b) { b.remove(); });
+        a = clone.textContent;
+      }
+      var text = '# ' + q + '\n\n' + a;
+      copyText(text, btnCopy);
       return;
     }
     var header = e.target.closest('.card-header');
@@ -388,6 +417,11 @@
   btnModalCancel.addEventListener('click', closeModal);
   editModal.addEventListener('click', function (e) {
     if (e.target === editModal) closeModal();
+  });
+
+  // Track form dirty state
+  editForm.addEventListener('input', function () {
+    formDirty = true;
   });
   editForm.addEventListener('submit', function (e) {
     e.preventDefault();
@@ -463,11 +497,13 @@
           // Remove heading
           ta.value = ta.value.substring(0, lineStart) + currentLine.replace(/^#{1,4}\s/, '') + ta.value.substring(start);
           ta.selectionStart = ta.selectionEnd = lineStart;
+          ta.dispatchEvent(new Event('input'));
         } else {
           var newLevel = level + 1;
           var newPrefix = '#'.repeat(newLevel) + ' ';
           ta.value = ta.value.substring(0, lineStart) + newPrefix + currentLine.substring(hMatch[0].length) + ta.value.substring(start);
           ta.selectionStart = ta.selectionEnd = lineStart + newPrefix.length;
+          ta.dispatchEvent(new Event('input'));
         }
       } else {
         insertAtLineStart(ta, lineStart, '## ');
@@ -517,6 +553,7 @@
 
     if (handled) {
       e.preventDefault();
+      formDirty = true;
       if (previewVisible) {
         editPreview.innerHTML = md(ta.value);
         renderMermaidBlocks(editPreview);
@@ -560,6 +597,7 @@
     textarea.value = before + prefix + after;
     textarea.selectionStart = textarea.selectionEnd = lineStart + prefix.length;
     textarea.focus();
+    textarea.dispatchEvent(new Event('input'));
   }
 
   // ===== File upload (all types) =====
@@ -633,6 +671,7 @@
     textarea.value = textarea.value.substring(0, s) + text + textarea.value.substring(e);
     textarea.selectionStart = textarea.selectionEnd = s + text.length;
     textarea.focus();
+    textarea.dispatchEvent(new Event('input'));
   }
 
   // ===== Modal open/close =====
@@ -676,9 +715,18 @@
     applySavedModalSize();
 
     editQuestion.focus();
+
+    // Reset dirty flag after DOM updates
+    formDirty = false;
   }
 
-  function closeModal() { editModal.hidden = true; }
+  function closeModal(force) {
+    if (!force && formDirty) {
+      if (!confirm('编辑内容尚未保存，确定要关闭吗？')) return;
+    }
+    editModal.hidden = true;
+    formDirty = false;
+  }
 
   // ===== CRUD =====
   function saveEntry() {
@@ -698,7 +746,7 @@
         if (!res.ok) return res.json().then(function (e) { throw new Error(e.error); });
         return res.json();
       })
-      .then(function () { closeModal(); fetchCards(); fetchStats(); })
+      .then(function () { formDirty = false; closeModal(true); fetchCards(); fetchStats(); })
       .catch(function (err) { alert('保存失败: ' + err.message); });
   }
 
