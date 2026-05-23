@@ -375,7 +375,7 @@ func handleQASearch(w http.ResponseWriter, r *http.Request) {
 		}
 		var filtered []db.QA
 		for _, r := range results {
-			if re.MatchString(r.Question) || re.MatchString(r.Answer) || re.MatchString(r.Category) {
+			if re.MatchString(r.Question) || re.MatchString(r.Answer) || re.MatchString(r.Category) || re.MatchString(r.Author) {
 				filtered = append(filtered, r)
 			}
 		}
@@ -791,7 +791,7 @@ func mergeImportedDB(importPath string, conflict string) (int, error) {
 	}
 	defer importDB.Close()
 
-	rows, err := importDB.Query("SELECT id, question, answer, category, visibility, created_at, updated_at FROM questions ORDER BY id")
+	rows, err := importDB.Query("SELECT id, question, answer, category, visibility, author, created_at, updated_at FROM questions ORDER BY id")
 	if err != nil {
 		return 0, fmt.Errorf("读取导入数据库失败: %w", err)
 	}
@@ -812,20 +812,20 @@ func mergeImportedDB(importPath string, conflict string) (int, error) {
 		case "skip":
 			// INSERT OR IGNORE: skip if ID already exists (keep local)
 			_, execErr = database.Exec(
-				"INSERT OR IGNORE INTO questions (id, question, answer, category, visibility, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-				q.ID, q.Question, q.Answer, q.Category, q.Visibility, q.CreatedAt, q.UpdatedAt,
+				"INSERT OR IGNORE INTO questions (id, question, answer, category, visibility, author, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+				q.ID, q.Question, q.Answer, q.Category, q.Visibility, q.Author, q.CreatedAt, q.UpdatedAt,
 			)
 		case "append":
 			// Always insert as new entry, ignore imported ID
 			_, execErr = database.Exec(
-				"INSERT INTO questions (question, answer, category, visibility, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-				q.Question, q.Answer, q.Category, q.Visibility, q.CreatedAt, q.UpdatedAt,
+				"INSERT INTO questions (question, answer, category, visibility, author, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+				q.Question, q.Answer, q.Category, q.Visibility, q.Author, q.CreatedAt, q.UpdatedAt,
 			)
 		default:
 			// "overwrite": INSERT OR REPLACE (import wins)
 			_, execErr = database.Exec(
-				"INSERT OR REPLACE INTO questions (id, question, answer, category, visibility, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-				q.ID, q.Question, q.Answer, q.Category, q.Visibility, q.CreatedAt, q.UpdatedAt,
+				"INSERT OR REPLACE INTO questions (id, question, answer, category, visibility, author, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+				q.ID, q.Question, q.Answer, q.Category, q.Visibility, q.Author, q.CreatedAt, q.UpdatedAt,
 			)
 		}
 		if execErr == nil {

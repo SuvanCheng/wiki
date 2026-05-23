@@ -14,6 +14,7 @@ type QA struct {
 	Answer     string `json:"answer"`
 	Category   string `json:"category"`
 	Visibility string `json:"visibility"`
+	Author     string `json:"author"`
 	CreatedAt  string `json:"created_at"`
 	UpdatedAt  string `json:"updated_at"`
 }
@@ -50,6 +51,7 @@ func InitSchema(db *sql.DB) error {
 			answer TEXT NOT NULL DEFAULT '',
 			category TEXT NOT NULL DEFAULT '',
 			visibility TEXT NOT NULL DEFAULT 'internal' CHECK(visibility IN ('internal', 'public')),
+			author TEXT NOT NULL DEFAULT 'author',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)
@@ -57,9 +59,10 @@ func InitSchema(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	// Migrate: add created_at to older databases, backfill from updated_at
+	// Migrations for older databases
 	db.Exec("ALTER TABLE questions ADD COLUMN created_at DATETIME")
 	db.Exec("UPDATE questions SET created_at = updated_at WHERE created_at IS NULL")
+	db.Exec("ALTER TABLE questions ADD COLUMN author TEXT NOT NULL DEFAULT 'author'")
 	return nil
 }
 
@@ -77,25 +80,28 @@ func InsertMockData(db *sql.DB) error {
 			Answer:     "## 内部服务器信息\n\n| 环境 | IP 地址 | 用途 |\n|------|---------|------|\n| 测试环境 | `192.168.1.100` | 日常开发测试 |\n| 预发布 | `192.168.1.200` | 上线前验证 |\n| 生产环境 | `10.0.0.50` | 正式服务 |\n\n**注意：** SSH 密钥存放在内部 Vault，请联系运维获取。",
 			Category:   "内部信息",
 			Visibility: "internal",
+			Author:     "author",
 		},
 		{
 			Question:   "如何在 Go 中实现并发？",
 			Answer:     "## Goroutine 基础\n\nGo 使用 `goroutine` 实现轻量级并发：\n\n```go\npackage main\n\nimport (\n\t\"fmt\"\n\t\"sync\"\n)\n\nfunc main() {\n\tvar wg sync.WaitGroup\n\tfor i := 0; i < 5; i++ {\n\t\twg.Add(1)\n\t\tgo func(id int) {\n\t\t\tdefer wg.Done()\n\t\t\tfmt.Printf(\"goroutine %d\\n\", id)\n\t\t}(i)\n\t}\n\twg.Wait()\n}\n```\n\n## Channel 通信\n\n```go\nch := make(chan string, 10)\nch <- \"hello\"\nmsg := <-ch\n```\n\n## 常用并发模式\n\n| 模式 | 用途 | 场景 |\n|------|------|------|\n| Fan-Out | 一个生产者多个消费者 | 并行处理任务 |\n| Fan-In | 多个生产者一个消费者 | 聚合结果 |\n| Pipeline | 数据流经多个阶段 | 数据处理管道 |\n| Worker Pool | 固定数量协程处理 | 限制并发数 |\n\n> **提示：** 使用 `sync.WaitGroup` 等待 goroutine 完成，使用 `context.Context` 控制超时和取消。",
 			Category:   "编程",
 			Visibility: "public",
+			Author:     "author",
 		},
 		{
 			Question:   "项目如何部署？",
 			Answer:     "## 部署步骤\n\n1. **构建二进制**\n   ```bash\n   CGO_ENABLED=0 go build -o qa-wiki ./cmd/qa-wiki\n   ```\n\n2. **准备数据文件**\n   - 将 `data.db` 放在与可执行文件同级目录\n   - 确保数据库文件有读写权限\n\n3. **启动服务**\n   ```bash\n   ./qa-wiki\n   ```\n\n4. **验证**\n   - 浏览器会自动打开 `http://127.0.0.1:11799`\n   - 确认页面正常加载，搜索功能可用\n\n## 运行环境要求\n\n| 平台 | 最低版本 |\n|------|----------|\n| macOS | 11+ (Intel / Apple Silicon) |\n| Windows | 10+ (x86_64) |\n| Linux | Kernel 3.10+ (x86_64) |\n\n> 无需安装任何运行时依赖，二进制文件即为完整应用。",
 			Category:   "运维",
 			Visibility: "public",
+			Author:     "author",
 		},
 	}
 
 	for _, m := range mocks {
 		_, err := db.Exec(
-			"INSERT INTO questions (question, answer, category, visibility, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-			m.Question, m.Answer, m.Category, m.Visibility, now, now,
+			"INSERT INTO questions (question, answer, category, visibility, author, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+			m.Question, m.Answer, m.Category, m.Visibility, m.Author, now, now,
 		)
 		if err != nil {
 			return err
@@ -107,8 +113,8 @@ func InsertMockData(db *sql.DB) error {
 func GetByID(db *sql.DB, id int) (QA, error) {
 	var q QA
 	err := db.QueryRow(
-		"SELECT id, question, answer, category, visibility, created_at, updated_at FROM questions WHERE id = ?", id,
-	).Scan(&q.ID, &q.Question, &q.Answer, &q.Category, &q.Visibility, &q.CreatedAt, &q.UpdatedAt)
+		"SELECT id, question, answer, category, visibility, author, created_at, updated_at FROM questions WHERE id = ?", id,
+	).Scan(&q.ID, &q.Question, &q.Answer, &q.Category, &q.Visibility, &q.Author, &q.CreatedAt, &q.UpdatedAt)
 	return q, err
 }
 
@@ -117,8 +123,8 @@ func Insert(db *sql.DB, q *QA) error {
 	q.CreatedAt = now
 	q.UpdatedAt = now
 	result, err := db.Exec(
-		"INSERT INTO questions (question, answer, category, visibility, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-		q.Question, q.Answer, q.Category, q.Visibility, q.CreatedAt, q.UpdatedAt,
+		"INSERT INTO questions (question, answer, category, visibility, author, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		q.Question, q.Answer, q.Category, q.Visibility, q.Author, q.CreatedAt, q.UpdatedAt,
 	)
 	if err != nil {
 		return err
@@ -134,8 +140,8 @@ func Insert(db *sql.DB, q *QA) error {
 func Update(db *sql.DB, q *QA) error {
 	q.UpdatedAt = time.Now().Format(time.RFC3339)
 	_, err := db.Exec(
-		"UPDATE questions SET question=?, answer=?, category=?, visibility=?, updated_at=? WHERE id=?",
-		q.Question, q.Answer, q.Category, q.Visibility, q.UpdatedAt, q.ID,
+		"UPDATE questions SET question=?, answer=?, category=?, visibility=?, author=?, updated_at=? WHERE id=?",
+		q.Question, q.Answer, q.Category, q.Visibility, q.Author, q.UpdatedAt, q.ID,
 	)
 	return err
 }
@@ -149,7 +155,7 @@ func Search(db *sql.DB, keyword string, includeInternal bool) ([]QA, error) {
 	var rows *sql.Rows
 	var err error
 
-	baseQuery := "SELECT id, question, answer, category, visibility, created_at, updated_at FROM questions"
+	baseQuery := "SELECT id, question, answer, category, visibility, author, created_at, updated_at FROM questions"
 	orderClause := " ORDER BY updated_at DESC"
 
 	if keyword == "" {
@@ -174,7 +180,7 @@ func Search(db *sql.DB, keyword string, includeInternal bool) ([]QA, error) {
 	var results []QA
 	for rows.Next() {
 		var q QA
-		if err := rows.Scan(&q.ID, &q.Question, &q.Answer, &q.Category, &q.Visibility, &q.CreatedAt, &q.UpdatedAt); err != nil {
+		if err := rows.Scan(&q.ID, &q.Question, &q.Answer, &q.Category, &q.Visibility, &q.Author, &q.CreatedAt, &q.UpdatedAt); err != nil {
 			return nil, err
 		}
 		results = append(results, q)
@@ -249,7 +255,7 @@ func GetStats(db *sql.DB, includeInternal bool) (Stats, error) {
 	}
 
 	// recent 5
-	recentQuery := "SELECT id, question, answer, category, visibility, created_at, updated_at FROM questions"
+	recentQuery := "SELECT id, question, answer, category, visibility, author, created_at, updated_at FROM questions"
 	if !includeInternal {
 		recentQuery += " WHERE visibility = 'public'"
 	}
@@ -259,7 +265,7 @@ func GetStats(db *sql.DB, includeInternal bool) (Stats, error) {
 		defer recRows.Close()
 		for recRows.Next() {
 			var q QA
-			if err := recRows.Scan(&q.ID, &q.Question, &q.Answer, &q.Category, &q.Visibility, &q.CreatedAt, &q.UpdatedAt); err == nil {
+			if err := recRows.Scan(&q.ID, &q.Question, &q.Answer, &q.Category, &q.Visibility, &q.Author, &q.CreatedAt, &q.UpdatedAt); err == nil {
 				s.Recent = append(s.Recent, q)
 			}
 		}

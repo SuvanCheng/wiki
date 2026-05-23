@@ -36,6 +36,7 @@
   var editQuestion = document.getElementById('editQuestion');
   var editCategory = document.getElementById('editCategory');
   var editVisibility = document.getElementById('editVisibility');
+  var editAuthor = document.getElementById('editAuthor');
   var editAnswer = document.getElementById('editAnswer');
   var editPreview = document.getElementById('editPreview');
   var btnModalClose = document.getElementById('btnModalClose');
@@ -695,6 +696,7 @@
       editQuestion.value = data.question;
       editCategory.value = data.category;
       editVisibility.value = data.visibility;
+      editAuthor.value = data.author || 'author';
       editAnswer.value = data.answer;
       // Pre-render for when user toggles preview on
       editPreview.innerHTML = md(data.answer);
@@ -706,6 +708,7 @@
       editQuestion.value = '';
       editCategory.value = '';
       editVisibility.value = 'public';
+      editAuthor.value = 'author';
       editAnswer.value = '';
       editPreview.innerHTML = '';
     }
@@ -736,6 +739,7 @@
       question: editQuestion.value.trim(),
       category: editCategory.value.trim(),
       visibility: editVisibility.value,
+      author: editAuthor.value.trim() || 'author',
       answer: editAnswer.value
     };
     var url = '/api/qa';
@@ -821,12 +825,11 @@
       actionsHtml += '</div>';
 
       var datesHtml = '';
-      if (item.created_at || item.updated_at) {
-        datesHtml = '<div class="card-dates">';
-        if (item.created_at) datesHtml += '<span>创建: ' + formatDate(item.created_at) + '</span>';
-        if (item.updated_at) datesHtml += '<span>更新: ' + formatDate(item.updated_at) + '</span>';
-        datesHtml += '</div>';
-      }
+      datesHtml = '<div class="card-dates">';
+      if (item.author) datesHtml += '<span>作者: ' + escapeHtml(item.author) + '</span>';
+      if (item.created_at) datesHtml += '<span>创建: ' + formatDate(item.created_at) + '</span>';
+      if (item.updated_at) datesHtml += '<span>更新: ' + formatDate(item.updated_at) + '</span>';
+      datesHtml += '</div>';
 
       html +=
         '<div class="card">' +
