@@ -1,0 +1,40 @@
+# 编译输出
+bin/
+qa-wiki
+qa-wiki.exe
+
+# 数据库文件（包含用户数据）
+*.db
+*.db-*
+*.db.*-*
+*.db.backup
+*.db.backup-*
+
+# 上传的文件和图片（用户数据）
+files/
+images/
+
+# Go 编译缓存
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# 临时文件
+tmp/
+temp/
