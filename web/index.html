@@ -19,6 +19,8 @@
           placeholder="搜索问题、答案或分类..." autocomplete="off" autofocus>
         <span id="searchStatus" class="search-status"></span>
       </div>
+      <button id="btnStarFilter" class="btn btn-filter" title="仅显示星标条目">&#11088; 星标</button>
+      <button id="btnAllDB" class="btn btn-filter" title="展示所有数据库">全部数据库</button>
       <button id="btnAdd" class="btn btn-primary">+ 新建</button>
     </div>
     <div id="cardContainer" class="card-container">
@@ -39,6 +41,18 @@
       </div>
     </div>
 
+    <div class="sidebar-section" id="dbSelectorSection">
+      <h3 class="sidebar-heading">数据库</h3>
+      <div class="db-selector-row">
+        <select id="dbSelector" class="db-selector"></select>
+        <button id="btnDBRename" class="btn-icon-sm" title="重命名">&#9998;</button>
+      </div>
+      <div class="db-actions-row">
+        <button id="btnDBLoad" class="btn-sm" title="加载数据库">+ 加载</button>
+        <button id="btnDBRemove" class="btn-sm btn-remove-db" title="移除数据库">&times; 移除</button>
+      </div>
+    </div>
+
     <div class="sidebar-section">
       <h3 class="sidebar-heading">统计</h3>
       <div id="statsContent">
@@ -46,6 +60,8 @@
         <div class="stat-row"><span class="stat-label">公开条目</span><span class="stat-value">--</span></div>
         <div id="internalStatRow" class="stat-row" hidden>
           <span class="stat-label">内部条目</span><span class="stat-value">--</span></div>
+        <div id="starredStatRow" class="stat-row" hidden>
+          <span class="stat-label">⭐ 星标条目</span><span class="stat-value">--</span></div>
       </div>
     </div>
 
@@ -71,6 +87,7 @@
           <select id="importMode" class="field-input" style="font-size:0.72rem;padding:4px 6px;flex:1">
             <option value="overwrite">覆盖导入</option>
             <option value="merge">合并导入</option>
+            <option value="load_new">加载为新数据库</option>
           </select>
           <button id="btnImport" class="btn btn-secondary" style="flex:1;font-size:0.78rem;padding:6px 10px">导入 (.zip/.db)</button>
         </div>
@@ -150,6 +167,65 @@
         <button type="submit" class="btn btn-primary">保存</button>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- Conflict Modal -->
+<div id="conflictModal" class="modal-overlay" hidden>
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <h2>名称冲突</h2>
+      <button id="btnConflictClose" class="btn-icon" title="关闭">&times;</button>
+    </div>
+    <div class="modal-body-conflict">
+      <p id="conflictMsg"></p>
+      <div class="conflict-options">
+        <label class="conflict-option">
+          <input type="radio" name="conflictAction" value="rename" checked>
+          <span>重命名新数据库</span>
+          <input type="text" id="conflictNewName" class="field-input" style="margin-top:4px;font-size:0.82rem;">
+        </label>
+        <label class="conflict-option">
+          <input type="radio" name="conflictAction" value="replace">
+          <span>替换现有数据库（不从磁盘删除文件）</span>
+        </label>
+        <label class="conflict-option">
+          <input type="radio" name="conflictAction" value="skip">
+          <span>跳过（不加载）</span>
+        </label>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <span style="flex:1"></span>
+      <button id="btnConflictCancel" class="btn btn-secondary">取消</button>
+      <button id="btnConflictConfirm" class="btn btn-primary">确认</button>
+    </div>
+  </div>
+</div>
+
+<!-- DB Load Modal -->
+<div id="dbLoadModal" class="modal-overlay" hidden>
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <h2>加载数据库</h2>
+      <button id="btnDBLoadClose" class="btn-icon" title="关闭">&times;</button>
+    </div>
+    <div class="modal-body-conflict">
+      <label class="field">
+        <span class="field-label">数据库文件路径（服务器上的 .db 文件路径）</span>
+        <input type="text" id="dbLoadPath" class="field-input" placeholder="/path/to/database.db" style="flex:1">
+      </label>
+      <label class="field">
+        <span class="field-label">显示名称（留空则使用数据库中保存的名称）</span>
+        <input type="text" id="dbLoadName" class="field-input" placeholder="可选">
+      </label>
+    </div>
+    <div class="modal-actions">
+      <span id="dbLoadStatus" class="upload-status"></span>
+      <span style="flex:1"></span>
+      <button id="btnDBLoadCancel" class="btn btn-secondary">取消</button>
+      <button id="btnDBLoadConfirm" class="btn btn-primary">加载</button>
+    </div>
   </div>
 </div>
 

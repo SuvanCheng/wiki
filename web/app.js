@@ -13,13 +13,17 @@
   var lockSecretInput = document.getElementById('lockSecretInput');
   var btnUnlock = document.getElementById('btnUnlock');
   var internalStatRow = document.getElementById('internalStatRow');
+  var starredStatRow = document.getElementById('starredStatRow');
   var statsContent = document.getElementById('statsContent');
   var catList = document.getElementById('catList');
   var recentList = document.getElementById('recentList');
   var dbAdminSection = document.getElementById('dbAdminSection');
+  var dbSelectorSection = document.getElementById('dbSelectorSection');
   var versionText = document.getElementById('versionText');
 
   var btnAdd = document.getElementById('btnAdd');
+  var btnStarFilter = document.getElementById('btnStarFilter');
+  var btnAllDB = document.getElementById('btnAllDB');
 
   var btnExport = document.getElementById('btnExport');
   var btnImport = document.getElementById('btnImport');
@@ -28,6 +32,11 @@
   var conflictStrategy = document.getElementById('conflictStrategy');
   var dbFileInput = document.getElementById('dbFileInput');
   var importStatus = document.getElementById('importStatus');
+
+  var dbSelector = document.getElementById('dbSelector');
+  var btnDBRename = document.getElementById('btnDBRename');
+  var btnDBLoad = document.getElementById('btnDBLoad');
+  var btnDBRemove = document.getElementById('btnDBRemove');
 
   var editModal = document.getElementById('editModal');
   var modalTitle = document.getElementById('modalTitle');
@@ -48,9 +57,34 @@
   var fileInput = document.getElementById('fileInput');
   var uploadStatus = document.getElementById('uploadStatus');
 
+  // Conflict modal
+  var conflictModal = document.getElementById('conflictModal');
+  var conflictMsg = document.getElementById('conflictMsg');
+  var conflictNewName = document.getElementById('conflictNewName');
+  var btnConflictClose = document.getElementById('btnConflictClose');
+  var btnConflictCancel = document.getElementById('btnConflictCancel');
+  var btnConflictConfirm = document.getElementById('btnConflictConfirm');
+
+  // DB load modal
+  var dbLoadModal = document.getElementById('dbLoadModal');
+  var dbLoadPath = document.getElementById('dbLoadPath');
+  var dbLoadName = document.getElementById('dbLoadName');
+  var dbLoadStatus = document.getElementById('dbLoadStatus');
+  var btnDBLoadClose = document.getElementById('btnDBLoadClose');
+  var btnDBLoadCancel = document.getElementById('btnDBLoadCancel');
+  var btnDBLoadConfirm = document.getElementById('btnDBLoadConfirm');
+
   var debounceTimer = null;
   var previewVisible = false;
   var formDirty = false;
+
+  // State
+  var allDBMode = false;
+  var starFilter = false;
+  var dbs = [];
+  var currentDBName = '';
+  var editingDBSource = '';
+  var conflictPending = null;
 
   // ===== Modal resize =====
   var modalEl = document.querySelector('#editModal .modal');
@@ -142,7 +176,7 @@
     }
   }
 
-  // ===== Shared copy helper (supports HTTP non-secure contexts) =====
+  // ===== Shared copy helper =====
   function copyText(text, btn, cssClass) {
     function done(msg) {
       btn.textContent = msg;
@@ -230,19 +264,27 @@
     var admin = isAdmin();
     btnAdd.style.display = admin ? '' : 'none';
     dbAdminSection.hidden = !admin;
+    dbSelectorSection.hidden = !admin;
     btnUpload.style.display = admin ? '' : 'none';
+    btnStarFilter.style.display = admin ? '' : 'none';
+    btnAllDB.style.display = admin ? '' : 'none';
+    btnDBRename.style.display = admin ? '' : 'none';
+    btnDBLoad.style.display = admin ? '' : 'none';
+    btnDBRemove.style.display = admin ? '' : 'none';
 
     if (admin) {
-      lockIcon.textContent = '🔓'; // unlocked
+      lockIcon.textContent = '🔓';
       lockLabel.textContent = '已解锁 — 管理员模式';
       document.querySelector('.lock-bar').classList.add('unlocked');
       lockInputRow.hidden = true;
       internalStatRow.hidden = false;
+      starredStatRow.hidden = false;
     } else {
-      lockIcon.textContent = '🔒'; // locked
+      lockIcon.textContent = '🔒';
       lockLabel.textContent = '仅公开条目 — 点击解锁';
       document.querySelector('.lock-bar').classList.remove('unlocked');
       internalStatRow.hidden = true;
+      starredStatRow.hidden = true;
     }
   }
   updateAdminUI();
@@ -252,8 +294,13 @@
       authSecret = '';
       sessionStorage.removeItem('qa_secret');
       updateAdminUI();
+      allDBMode = false;
+      starFilter = false;
+      btnAllDB.classList.remove('active');
+      btnStarFilter.classList.remove('active');
       fetchCards();
       fetchStats();
+      fetchDBList();
     } else {
       lockInputRow.hidden = false;
       lockSecretInput.focus();
@@ -279,6 +326,7 @@
       updateAdminUI();
       fetchCards();
       fetchStats();
+      fetchDBList();
     })
     .catch(function (err) { alert('解锁失败: ' + err.message); });
   });
@@ -311,17 +359,14 @@
   function md(text) {
     if (typeof marked === 'undefined') return escapeHtml(text);
 
-    // Protect math blocks from markdown parsing
     var mathBlocks = [];
     var mathInlines = [];
 
-    // Protect display math first: $$...$$
     text = text.replace(/\$\$([\s\S]*?)\$\$/g, function (_, math) {
       mathBlocks.push(math.trim());
       return '\x00MB' + (mathBlocks.length - 1) + '\x00';
     });
 
-    // Protect inline math: $...$ (content must not be empty or whitespace-only)
     text = text.replace(/\$([^$\s](?:[^$]*[^$\s])?)\$/g, function (_, math) {
       mathInlines.push(math.trim());
       return '\x00MI' + (mathInlines.length - 1) + '\x00';
@@ -329,7 +374,6 @@
 
     var html = marked.parse(text);
 
-    // Restore display math
     html = html.replace(/\x00MB(\d+)\x00/g, function (_, i) {
       var idx = parseInt(i, 10);
       if (typeof katex !== 'undefined') {
@@ -340,7 +384,6 @@
       return '<pre><code>' + escapeHtml(mathBlocks[idx]) + '</code></pre>';
     });
 
-    // Restore inline math
     html = html.replace(/\x00MI(\d+)\x00/g, function (_, i) {
       var idx = parseInt(i, 10);
       if (typeof katex !== 'undefined') {
@@ -354,6 +397,250 @@
     return html;
   }
 
+  // ===== Query string helper =====
+  function dbQuery() {
+    if (allDBMode) return '&db=*';
+    if (currentDBName) return '&db=' + encodeURIComponent(currentDBName);
+    return '';
+  }
+
+  // For write operations, always use the active (single) database
+  function dbQuerySingle() {
+    if (currentDBName) return '&db=' + encodeURIComponent(currentDBName);
+    return '';
+  }
+
+  // ===== Database management =====
+  function fetchDBList() {
+    if (!isAdmin()) { dbSelector.innerHTML = '<option>仅公开条目</option>'; return; }
+    fetch('/api/db/list', { headers: { 'X-Auth': authSecret } })
+      .then(function (res) { return res.json(); })
+      .then(function (list) {
+        dbs = list;
+        var html = '';
+        for (var i = 0; i < list.length; i++) {
+          var sel = list[i].name === currentDBName ? ' selected' : '';
+          html += '<option value="' + escapeHtml(list[i].name) + '"' + sel + '>' +
+            escapeHtml(list[i].name) + ' (' + list[i].count + ')' +
+            '</option>';
+        }
+        dbSelector.innerHTML = html;
+        if (!currentDBName && list.length > 0) {
+          currentDBName = list[0].name;
+          dbSelector.value = currentDBName;
+        }
+      })
+      .catch(function () {});
+  }
+
+  dbSelector.addEventListener('change', function () {
+    var name = dbSelector.value;
+    if (name === currentDBName) return;
+    if (allDBMode) {
+      allDBMode = false;
+      btnAllDB.classList.remove('active');
+    }
+    fetch('/api/db/switch', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ name: name })
+    })
+    .then(function (res) { return res.json(); })
+    .then(function () {
+      currentDBName = name;
+      fetchCards();
+      fetchStats();
+    })
+    .catch(function (err) { alert('切换失败: ' + err.message); });
+  });
+
+  btnDBRename.addEventListener('click', function () {
+    if (!isAdmin() || !currentDBName) return;
+    var current = currentDBName;
+    var newName = prompt('重命名数据库 "' + current + '" 为：', current);
+    if (!newName || newName.trim() === '' || newName.trim() === current) return;
+    newName = newName.trim();
+
+    var dbEntry = null;
+    for (var i = 0; i < dbs.length; i++) {
+      if (dbs[i].name === current) { dbEntry = dbs[i]; break; }
+    }
+    if (!dbEntry) return;
+
+    fetch('/api/db/name', {
+      method: 'PUT',
+      headers: authHeaders(),
+      body: JSON.stringify({ path: dbEntry.path, newName: newName })
+    })
+    .then(function (res) { return res.json(); })
+    .then(function (data) {
+      if (data.error) { alert('重命名失败: ' + data.error); return; }
+      currentDBName = newName;
+      fetchDBList();
+      fetchCards();
+      fetchStats();
+    })
+    .catch(function (err) { alert('重命名失败: ' + err.message); });
+  });
+
+  // DB Load
+  btnDBLoad.addEventListener('click', function () {
+    if (!isAdmin()) return;
+    dbLoadPath.value = '';
+    dbLoadName.value = '';
+    dbLoadStatus.textContent = '';
+    dbLoadModal.hidden = false;
+    dbLoadPath.focus();
+  });
+
+  btnDBLoadClose.addEventListener('click', function () { dbLoadModal.hidden = true; });
+  btnDBLoadCancel.addEventListener('click', function () { dbLoadModal.hidden = true; });
+  dbLoadModal.addEventListener('click', function (e) { if (e.target === dbLoadModal) dbLoadModal.hidden = true; });
+
+  btnDBLoadConfirm.addEventListener('click', function () {
+    var path = dbLoadPath.value.trim();
+    if (!path) { dbLoadStatus.textContent = '请输入路径'; return; }
+    var name = dbLoadName.value.trim();
+    dbLoadStatus.textContent = '加载中...';
+    doLoadDB(path, name);
+  });
+
+  function doLoadDB(path, name) {
+    var body = { path: path, onConflict: 'rename' };
+    if (name) body.name = name;
+
+    fetch('/api/db/load', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(body)
+    })
+    .then(function (res) { return res.json(); })
+    .then(function (data) {
+      if (data.conflict === 'true') {
+        conflictPending = { path: path, name: name };
+        showConflictModal(data.error, path, name || '');
+        dbLoadModal.hidden = true;
+        return;
+      }
+      if (data.error) {
+        dbLoadStatus.textContent = '错误: ' + data.error;
+        return;
+      }
+      dbLoadStatus.textContent = '加载成功（' + (data.count || 0) + ' 条）';
+      currentDBName = data.name;
+      fetchDBList();
+      fetchCards();
+      fetchStats();
+      setTimeout(function () { dbLoadModal.hidden = true; }, 800);
+    })
+    .catch(function (err) { dbLoadStatus.textContent = '失败: ' + err.message; });
+  }
+
+  // Conflict modal
+  function showConflictModal(msg, path, suggestedName) {
+    conflictMsg.textContent = msg;
+    conflictNewName.value = suggestedName + '_' + new Date().toISOString().slice(5, 10).replace(/-/g, '') + '-' +
+      String(new Date().getHours()).padStart(2, '0') + String(new Date().getMinutes()).padStart(2, '0');
+    conflictPending = { path: path, name: suggestedName };
+    conflictModal.hidden = false;
+  }
+
+  btnConflictClose.addEventListener('click', function () { conflictModal.hidden = true; });
+  btnConflictCancel.addEventListener('click', function () { conflictModal.hidden = true; });
+  conflictModal.addEventListener('click', function (e) { if (e.target === conflictModal) conflictModal.hidden = true; });
+
+  btnConflictConfirm.addEventListener('click', function () {
+    var action = document.querySelector('input[name="conflictAction"]:checked').value;
+    if (!conflictPending) return;
+
+    if (action === 'skip') {
+      conflictModal.hidden = true;
+      conflictPending = null;
+      return;
+    }
+
+    var body = { path: conflictPending.path };
+    if (action === 'rename') {
+      body.name = conflictNewName.value.trim() || (conflictPending.name + '_new');
+      body.onConflict = 'rename';
+    } else if (action === 'replace') {
+      body.onConflict = 'replace';
+    }
+
+    fetch('/api/db/load', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(body)
+    })
+    .then(function (res) { return res.json(); })
+    .then(function (data) {
+      if (data.error) { alert('加载失败: ' + data.error); return; }
+      currentDBName = data.name;
+      conflictModal.hidden = true;
+      conflictPending = null;
+      fetchDBList();
+      fetchCards();
+      fetchStats();
+    })
+    .catch(function (err) { alert('加载失败: ' + err.message); });
+  });
+
+  // DB Remove
+  btnDBRemove.addEventListener('click', function () {
+    if (!isAdmin()) return;
+    if (dbs.length <= 1) { alert('至少保留一个数据库'); return; }
+    var dbEntry = null;
+    for (var i = 0; i < dbs.length; i++) {
+      if (dbs[i].name === currentDBName) { dbEntry = dbs[i]; break; }
+    }
+    if (!dbEntry) return;
+    if (!confirm('确定要移除数据库 "' + currentDBName + '" 吗？\n（不会删除磁盘上的文件）')) return;
+
+    fetch('/api/db/remove', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ path: dbEntry.path })
+    })
+    .then(function (res) { return res.json(); })
+    .then(function (data) {
+      if (data.error) { alert('移除失败: ' + data.error); return; }
+      currentDBName = '';
+      fetchDBList().then(function () {
+        if (dbs.length > 0) currentDBName = dbs[0].name;
+        fetchCards();
+        fetchStats();
+      });
+    })
+    .catch(function (err) { alert('移除失败: ' + err.message); });
+  });
+
+  // ===== All-DB toggle =====
+  btnAllDB.addEventListener('click', function () {
+    if (!isAdmin()) return;
+    allDBMode = !allDBMode;
+    if (allDBMode) {
+      btnAllDB.classList.add('active');
+      dbSelector.disabled = true;
+    } else {
+      btnAllDB.classList.remove('active');
+      dbSelector.disabled = false;
+    }
+    fetchCards();
+    fetchStats();
+  });
+
+  // ===== Star filter =====
+  btnStarFilter.addEventListener('click', function () {
+    if (!isAdmin()) return;
+    starFilter = !starFilter;
+    if (starFilter) {
+      btnStarFilter.classList.add('active');
+    } else {
+      btnStarFilter.classList.remove('active');
+    }
+    fetchCards();
+  });
+
   // ===== Search =====
   searchInput.addEventListener('input', function () {
     clearTimeout(debounceTimer);
@@ -366,14 +653,14 @@
     if (btnEdit) {
       e.stopPropagation(); e.preventDefault();
       if (!isAdmin()) return;
-      editEntry(parseInt(btnEdit.getAttribute('data-id'), 10));
+      editEntry(parseInt(btnEdit.getAttribute('data-id'), 10), btnEdit.getAttribute('data-db-source'));
       return;
     }
     var btnDel = e.target.closest('.btn-delete');
     if (btnDel) {
       e.stopPropagation(); e.preventDefault();
       if (!isAdmin()) return;
-      deleteEntry(parseInt(btnDel.getAttribute('data-id'), 10));
+      deleteEntry(parseInt(btnDel.getAttribute('data-id'), 10), btnDel.getAttribute('data-db-source'));
       return;
     }
     var btnCopy = e.target.closest('.btn-copy-qa');
@@ -392,6 +679,13 @@
       copyText(text, btnCopy);
       return;
     }
+    var btnStar = e.target.closest('.btn-star');
+    if (btnStar) {
+      e.stopPropagation(); e.preventDefault();
+      if (!isAdmin()) return;
+      toggleStar(parseInt(btnStar.getAttribute('data-id'), 10), btnStar);
+      return;
+    }
     var header = e.target.closest('.card-header');
     if (header && !e.target.closest('button')) {
       var card = header.closest('.card');
@@ -399,7 +693,6 @@
       if (card.classList.contains('open')) {
         renderMermaidBlocks(card);
         addCopyButtons(card);
-        // Force GIFs to restart animation when card opens
         card.querySelectorAll('img[src$=".gif"]').forEach(function (img) {
           var src = img.src;
           img.src = '';
@@ -420,7 +713,6 @@
     if (e.target === editModal) closeModal();
   });
 
-  // Track form dirty state
   editForm.addEventListener('input', function () {
     formDirty = true;
   });
@@ -428,7 +720,6 @@
     e.preventDefault();
     saveEntry();
   });
-
 
   // ===== Preview toggle =====
   var fieldAnswer = document.querySelector('.field-answer');
@@ -466,13 +757,10 @@
     var handled = true;
 
     if (e.key === 'b' || e.key === 'B') {
-      // Bold
       wrapSelection(ta, '**', '**');
     } else if (e.key === 'i' || e.key === 'I') {
-      // Italic
       wrapSelection(ta, '*', '*');
     } else if ((e.key === 'k' || e.key === 'K') && e.shiftKey) {
-      // Code block (Ctrl+Shift+K)
       if (sel) {
         var lang = prompt('代码语言（可选，如 go/python/bash）：') || '';
         wrapSelection(ta, '```' + lang + '\n', '\n```');
@@ -480,22 +768,18 @@
         insertText(ta, '\n```\n\n```\n');
       }
     } else if (e.key === 'k' || e.key === 'K') {
-      // Link (Ctrl+K)
       if (sel) {
         wrapSelection(ta, '[', '](url)');
       } else {
         insertText(ta, '[text](url)');
       }
     } else if (e.key === '`') {
-      // Inline code
       wrapSelection(ta, '`', '`');
     } else if (e.key === 'h' || e.key === 'H') {
-      // Heading — cycle H2 → H3 → H4 → clear
       var hMatch = currentLine.match(/^(#{1,4})\s/);
       if (hMatch) {
         var level = hMatch[1].length;
         if (level >= 4) {
-          // Remove heading
           ta.value = ta.value.substring(0, lineStart) + currentLine.replace(/^#{1,4}\s/, '') + ta.value.substring(start);
           ta.selectionStart = ta.selectionEnd = lineStart;
           ta.dispatchEvent(new Event('input'));
@@ -511,42 +795,33 @@
       }
     } else if (e.key === 'u' || e.key === 'U') {
       if (e.shiftKey) {
-        // Ordered list (Ctrl+Shift+U)
         insertAtLineStart(ta, lineStart, '1. ');
       } else {
-        // Unordered list (Ctrl+U)
         insertAtLineStart(ta, lineStart, '- ');
       }
     } else if ((e.key === 's' || e.key === 'S') && e.shiftKey) {
-      // Strikethrough (Ctrl+Shift+S)
       wrapSelection(ta, '~~', '~~');
     } else if ((e.key === 'x' || e.key === 'X') && e.shiftKey) {
-      // Task list (Ctrl+Shift+X)
       insertAtLineStart(ta, lineStart, '- [ ] ');
     } else if (e.key === '>' || (e.key === 'b' && e.shiftKey) || (e.key === 'B' && e.shiftKey)) {
-      // Blockquote
       if (e.key === '>') {
         insertAtLineStart(ta, lineStart, '> ');
       } else {
-        // Ctrl+Shift+B: blockquote
         insertAtLineStart(ta, lineStart, '> ');
       }
     } else if ((e.key === 'm' || e.key === 'M') && e.shiftKey) {
-      // Display math formula (Ctrl+Shift+M)
       if (sel) {
         wrapSelection(ta, '$$\n', '\n$$');
       } else {
         insertText(ta, '\n$$\n\n$$\n');
       }
     } else if (e.key === 'm' || e.key === 'M') {
-      // Mermaid diagram (Ctrl+M)
       if (sel) {
         wrapSelection(ta, '```mermaid\n', '\n```');
       } else {
         insertText(ta, '\n```mermaid\ngraph TD\n  A --> B\n```\n');
       }
     } else if (e.key === '-' && e.shiftKey) {
-      // Horizontal rule (Ctrl+Shift+-)
       insertText(ta, '\n---\n');
     } else {
       handled = false;
@@ -570,7 +845,6 @@
     var text = before + (sel || 'text') + after;
     textarea.value = textarea.value.substring(0, start) + text + textarea.value.substring(end);
     if (!sel) {
-      // Select placeholder word for easy replacement
       var phStart = start + before.length;
       var phLen = sel ? sel.length : 4;
       textarea.selectionStart = phStart;
@@ -619,7 +893,6 @@
         uploadFile(items[i].getAsFile());
         return;
       }
-      // Handle file paste (e.g., from file manager)
       if (items[i].kind === 'file') {
         e.preventDefault();
         if (!isAdmin()) { alert('需要管理员权限'); return; }
@@ -677,13 +950,11 @@
 
   // ===== Modal open/close =====
   function openModal(data) {
-    // Reset to CSS defaults
     modalEl.style.maxWidth = '';
     modalEl.style.width = '';
     modalEl.style.maxHeight = '';
     modalEl.style.height = '';
 
-    // Reset preview to hidden, show textarea
     previewVisible = false;
     fieldAnswer.style.display = '';
     fieldPreview.classList.remove('preview-expanded');
@@ -693,18 +964,19 @@
     if (data) {
       modalTitle.textContent = '编辑条目 #' + data.id;
       editId.value = data.id;
+      editingDBSource = data.db_source || '';
       editQuestion.value = data.question;
       editCategory.value = data.category;
       editVisibility.value = data.visibility;
       editAuthor.value = data.author || 'author';
       editAnswer.value = data.answer;
-      // Pre-render for when user toggles preview on
       editPreview.innerHTML = md(data.answer);
       renderMermaidBlocks(editPreview);
       addCopyButtons(editPreview);
     } else {
       modalTitle.textContent = '新建条目';
       editId.value = '';
+      editingDBSource = '';
       editQuestion.value = '';
       editCategory.value = '';
       editVisibility.value = 'public';
@@ -714,12 +986,10 @@
     }
     editModal.hidden = false;
 
-    // Apply user's saved size preference
     applySavedModalSize();
 
     editQuestion.focus();
 
-    // Reset dirty flag after DOM updates
     formDirty = false;
   }
 
@@ -742,9 +1012,9 @@
       author: editAuthor.value.trim() || 'author',
       answer: editAnswer.value
     };
-    var url = '/api/qa';
-    var method = 'POST';
-    if (id) { url = '/api/qa/' + id; method = 'PUT'; }
+    var dbSave = editingDBSource ? '&db=' + encodeURIComponent(editingDBSource) : dbQuerySingle();
+    var url = '/api/qa' + (id ? '/' + id : '') + '?' + dbSave.substring(1);
+    var method = id ? 'PUT' : 'POST';
     fetch(url, { method: method, headers: authHeaders(), body: JSON.stringify(payload) })
       .then(function (res) {
         if (!res.ok) return res.json().then(function (e) { throw new Error(e.error); });
@@ -754,20 +1024,43 @@
       .catch(function (err) { alert('保存失败: ' + err.message); });
   }
 
-  function editEntry(id) {
+  function editEntry(id, dbSource) {
     if (!isAdmin()) return;
-    fetch('/api/qa/' + id, { headers: { 'X-Auth': authSecret } })
+    var dbParam = dbSource ? '&db=' + encodeURIComponent(dbSource) : dbQuerySingle();
+    fetch('/api/qa/' + id + '?' + dbParam.substring(1), { headers: { 'X-Auth': authSecret } })
       .then(function (res) { if (!res.ok) throw new Error('not found'); return res.json(); })
       .then(openModal)
       .catch(function (err) { alert('加载失败: ' + err.message); });
   }
 
-  function deleteEntry(id) {
+  function deleteEntry(id, dbSource) {
     if (!isAdmin()) return;
     if (!confirm('确定要删除条目 #' + id + ' 吗？')) return;
-    fetch('/api/qa/' + id, { method: 'DELETE', headers: { 'X-Auth': authSecret } })
+    var dbParam = dbSource ? '&db=' + encodeURIComponent(dbSource) : dbQuerySingle();
+    fetch('/api/qa/' + id + '?' + dbParam.substring(1), { method: 'DELETE', headers: { 'X-Auth': authSecret } })
       .then(function (res) { if (!res.ok) throw new Error('HTTP ' + res.status); fetchCards(); fetchStats(); })
       .catch(function (err) { alert('删除失败: ' + err.message); });
+  }
+
+  function toggleStar(id, btn) {
+    if (!isAdmin()) return;
+    var dbSrc = btn ? btn.getAttribute('data-db-source') : '';
+    var dbParam = dbSrc ? '?db=' + encodeURIComponent(dbSrc) : '?' + dbQuerySingle().substring(1);
+    fetch('/api/qa/' + id + '/star' + dbParam, { method: 'POST', headers: authHeaders() })
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        if (btn) {
+          if (data.starred) {
+            btn.textContent = '⭐';
+            btn.classList.add('starred');
+          } else {
+            btn.textContent = '☆';
+            btn.classList.remove('starred');
+          }
+        }
+        fetchStats();
+      })
+      .catch(function () {});
   }
 
   // ===== Fetch & render cards =====
@@ -775,13 +1068,16 @@
     searchStatus.innerHTML = '<span class="spinner"></span>';
     var q = searchInput.value.trim();
     var useRegex = false;
-    // Detect /pattern/ syntax for regex search
     if (q.length > 2 && q[0] === '/' && q[q.length - 1] === '/') {
       q = q.slice(1, -1);
       useRegex = true;
     }
-    var url = '/api/qa';
-    if (q) url += '?q=' + encodeURIComponent(q) + (useRegex ? '&regex=true' : '');
+    var url = '/api/qa?';
+    if (q) url += 'q=' + encodeURIComponent(q) + (useRegex ? '&regex=true' : '') + '&';
+    if (starFilter) url += 'starred=true&';
+    url += dbQuery().substring(1);
+    if (url.endsWith('?')) url = url.slice(0, -1);
+
     var headers = {};
     if (authSecret) headers['X-Auth'] = authSecret;
     return fetch(url, { headers: headers })
@@ -801,56 +1097,124 @@
     var html = '';
     var admin = isAdmin();
 
-    items.forEach(function (item) {
-      var answerHTML = md(item.answer);
-      var visBadge = item.visibility === 'internal'
-        ? '<span class="badge badge-visibility">INTERNAL</span>' : '';
+    // Check if items have db_source (all-db mode)
+    var hasDBSource = false;
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].db_source) { hasDBSource = true; break; }
+    }
 
-      // Split comma-separated tags into individual badges
-      var tagsHtml = '';
-      if (item.category) {
-        var tags = item.category.split(',').map(function (t) { return t.trim(); }).filter(Boolean);
-        tags.forEach(function (t) {
-          tagsHtml += '<span class="badge badge-category">' + escapeHtml(t) + '</span>';
-        });
+    if (hasDBSource && allDBMode) {
+      // Group by db_source with section headers
+      var groups = {};
+      var groupOrder = [];
+      for (var i = 0; i < items.length; i++) {
+        var src = items[i].db_source || '';
+        if (!groups[src]) {
+          groups[src] = [];
+          groupOrder.push(src);
+        }
+        groups[src].push(items[i]);
       }
 
-      var actionsHtml = '<div class="card-actions">' +
-        '<button class="btn-sm btn-copy-qa" data-id="' + item.id + '">复制QA</button>';
-      if (admin) {
-        actionsHtml +=
-          '<button class="btn-sm btn-edit" data-id="' + item.id + '">编辑</button>' +
-          '<button class="btn-sm btn-delete" data-id="' + item.id + '">删除</button>';
+      // Find color for each db
+      var dbColors = {};
+      for (var j = 0; j < dbs.length; j++) {
+        dbColors[dbs[j].name] = dbs[j].color;
       }
-      actionsHtml += '</div>';
 
-      var datesHtml = '';
-      datesHtml = '<div class="card-dates">';
-      if (item.author) datesHtml += '<span>作者: ' + escapeHtml(item.author) + '</span>';
-      if (item.created_at) datesHtml += '<span>创建: ' + formatDate(item.created_at) + '</span>';
-      if (item.updated_at) datesHtml += '<span>更新: ' + formatDate(item.updated_at) + '</span>';
-      datesHtml += '</div>';
+      for (var g = 0; g < groupOrder.length; g++) {
+        var dbName = groupOrder[g];
+        var groupItems = groups[dbName];
+        var color = dbColors[dbName] || '#888';
 
-      html +=
-        '<div class="card">' +
-          '<div class="card-header">' +
-            '<span class="card-id">#' + item.id + '</span>' +
-            '<div class="card-question">' + escapeHtml(item.question) + '</div>' +
-            '<div class="card-meta">' +
-              '<div class="card-badges">' + tagsHtml + visBadge + '</div>' +
-              actionsHtml +
-            '</div>' +
-            '<span class="card-chevron">&#9654;</span>' +
-          '</div>' +
-          '<div class="card-body">' +
-            '<div class="markdown-body">' + answerHTML + '</div>' +
-            datesHtml +
-          '</div>' +
-        '</div>';
-    });
+        html += '<div class="db-section-header">' +
+          '<span class="db-dot" style="background:' + color + '"></span>' +
+          escapeHtml(dbName) +
+          '<span class="db-section-count">' + groupItems.length + ' 条</span>' +
+          '</div>';
+
+        for (var k = 0; k < groupItems.length; k++) {
+          html += renderCard(groupItems[k], admin, color);
+        }
+      }
+    } else {
+      for (var i = 0; i < items.length; i++) {
+        var dbColor = '';
+        if (items[i].db_source) {
+          for (var j = 0; j < dbs.length; j++) {
+            if (dbs[j].name === items[i].db_source) {
+              dbColor = dbs[j].color;
+              break;
+            }
+          }
+        }
+        html += renderCard(items[i], admin, dbColor);
+      }
+    }
 
     cardContainer.innerHTML = html;
     addCopyButtons(cardContainer);
+  }
+
+  function renderCard(item, admin, dbColor) {
+    var answerHTML = md(item.answer);
+    var visBadge = item.visibility === 'internal'
+      ? '<span class="badge badge-visibility">INTERNAL</span>' : '';
+
+    var tagsHtml = '';
+    if (item.category) {
+      var tags = item.category.split(',').map(function (t) { return t.trim(); }).filter(Boolean);
+      tags.forEach(function (t) {
+        tagsHtml += '<span class="badge badge-category">' + escapeHtml(t) + '</span>';
+      });
+    }
+
+    var dbSourceBadge = '';
+    if (item.db_source) {
+      dbSourceBadge = '<span class="db-source-badge">' +
+        '<span class="db-source-dot" style="background:' + (dbColor || '#888') + '"></span>' +
+        escapeHtml(item.db_source) + '</span>';
+    }
+
+    var starIcon = admin
+      ? '<button class="btn-star' + (item.starred ? ' starred' : '') + '" data-id="' + item.id + '" data-db-source="' + escapeHtml(item.db_source || '') + '">' +
+        (item.starred ? '⭐' : '☆') + '</button>'
+      : (item.starred ? '<span style="font-size:0.85rem">⭐</span>' : '');
+
+    var actionsHtml = '<div class="card-actions">' +
+      starIcon +
+      '<button class="btn-sm btn-copy-qa" data-id="' + item.id + '">复制QA</button>';
+    if (admin) {
+      actionsHtml +=
+        '<button class="btn-sm btn-edit" data-id="' + item.id + '" data-db-source="' + escapeHtml(item.db_source || '') + '">编辑</button>' +
+        '<button class="btn-sm btn-delete" data-id="' + item.id + '" data-db-source="' + escapeHtml(item.db_source || '') + '">删除</button>';
+    }
+    actionsHtml += '</div>';
+
+    var datesHtml = '<div class="card-dates">';
+    if (item.author) datesHtml += '<span>作者: ' + escapeHtml(item.author) + '</span>';
+    if (item.created_at) datesHtml += '<span>创建: ' + formatDate(item.created_at) + '</span>';
+    if (item.updated_at) datesHtml += '<span>更新: ' + formatDate(item.updated_at) + '</span>';
+    datesHtml += '</div>';
+
+    var cardStyle = dbColor ? ' style="border-left-color:' + dbColor + '"' : '';
+    var cardClass = 'card' + (dbColor ? ' db-source' : '');
+
+    return '<div class="' + cardClass + '"' + cardStyle + '>' +
+      '<div class="card-header">' +
+        '<span class="card-id">#' + item.id + '</span>' +
+        '<div class="card-question">' + escapeHtml(item.question) + '</div>' +
+        '<div class="card-meta">' +
+          '<div class="card-badges">' + dbSourceBadge + tagsHtml + visBadge + '</div>' +
+          actionsHtml +
+        '</div>' +
+        '<span class="card-chevron">&#9654;</span>' +
+      '</div>' +
+      '<div class="card-body">' +
+        '<div class="markdown-body">' + answerHTML + '</div>' +
+        datesHtml +
+      '</div>' +
+    '</div>';
   }
 
   function escapeHtml(str) {
@@ -876,7 +1240,9 @@
   function fetchStats() {
     var headers = {};
     if (authSecret) headers['X-Auth'] = authSecret;
-    fetch('/api/stats', { headers: headers })
+    var url = '/api/stats?' + dbQuery().substring(1);
+    if (url.endsWith('?')) url = '/api/stats';
+    fetch(url, { headers: headers })
       .then(function (res) { return res.json(); })
       .then(renderStats)
       .catch(function () {});
@@ -889,8 +1255,16 @@
       rows[1].querySelector('.stat-value').textContent = s.public_count || 0;
     }
     if (s.internal_count > 0 || isAdmin()) {
-      var ir = statsContent.querySelector('#internalStatRow');
-      if (ir) ir.querySelector('.stat-value').textContent = s.internal_count || 0;
+      var ir = document.getElementById('internalStatRow');
+      if (ir) {
+        ir.querySelector('.stat-value').textContent = s.internal_count || 0;
+        ir.hidden = !isAdmin();
+      }
+    }
+    var sr = document.getElementById('starredStatRow');
+    if (sr) {
+      sr.querySelector('.stat-value').textContent = s.starred_count || 0;
+      sr.hidden = !isAdmin();
     }
 
     if (s.categories && s.categories.length > 0) {
@@ -914,7 +1288,17 @@
     if (s.recent && s.recent.length > 0) {
       var recHTML = '';
       s.recent.forEach(function (r) {
+        var dotHtml = '';
+        if (r.db_source) {
+          for (var i = 0; i < dbs.length; i++) {
+            if (dbs[i].name === r.db_source) {
+              dotHtml = '<span class="db-source-dot" style="background:' + dbs[i].color + '"></span>';
+              break;
+            }
+          }
+        }
         recHTML += '<div class="recent-item" data-id="' + r.id + '" title="' + escapeHtml(r.question) + '">' +
+          dotHtml +
           '<span style="font-family:monospace;color:var(--text-muted);font-size:0.66rem;">#' + r.id + '</span> ' +
           escapeHtml(r.question) + '</div>';
       });
@@ -930,7 +1314,6 @@
                 c.classList.add('open');
                 renderMermaidBlocks(c);
                 addCopyButtons(c);
-                // Force GIF reload
                 c.querySelectorAll('img[src$=".gif"]').forEach(function (img) {
                   var s = img.src; img.src = '';
                   requestAnimationFrame(function () { img.src = s; });
@@ -957,7 +1340,7 @@
   // ===== DB Export / Import =====
   btnExport.addEventListener('click', function () {
     if (!isAdmin()) return;
-    fetch('/api/db/export', { headers: { 'X-Auth': authSecret } })
+    fetch('/api/db/export' + (dbQuerySingle() ? '?' + dbQuerySingle().substring(1) : ''), { headers: { 'X-Auth': authSecret } })
       .then(function (res) {
         if (!res.ok) throw new Error('导出失败');
         return res.blob();
@@ -975,7 +1358,6 @@
       .catch(function (err) { alert('导出失败: ' + err.message); });
   });
 
-  // Show/hide conflict strategy based on import mode
   importMode.addEventListener('change', function () {
     conflictRow.style.display = importMode.value === 'merge' ? '' : 'none';
   });
@@ -984,12 +1366,13 @@
     if (!isAdmin()) return;
     var mode = importMode.value;
     var msg;
-    if (mode === 'overwrite') {
-      msg = '覆盖模式将替换当前全部数据和文件，建议先导出备份。确定继续？';
+    if (mode === 'load_new') {
+      msg = '将导入的数据库文件保存为新数据库并加载，不会影响现有数据库。确定继续？';
+    } else if (mode === 'overwrite') {
+      msg = '覆盖模式将替换当前选中数据库的全部数据和文件，建议先导出备份。确定继续？';
     } else {
-      var strategy = conflictStrategy.value;
-      var strategyLabel = conflictStrategy.options[conflictStrategy.selectedIndex].text;
-      msg = '合并模式 — ' + strategyLabel + '\n\n确定继续？';
+      var strategy = conflictStrategy.options[conflictStrategy.selectedIndex].text;
+      msg = '合并模式 — ' + strategy + '\n\n确定继续？';
     }
     if (!confirm(msg)) return;
     dbFileInput.click();
@@ -1013,7 +1396,10 @@
       })
       .then(function (data) {
         var msg;
-        if (data.ok === 'merged') {
+        if (data.ok === 'loaded_new') {
+          msg = '已加载为新数据库: ' + (data.name || '') + '（' + (data.count || 0) + ' 条）';
+          currentDBName = data.name;
+        } else if (data.ok === 'merged') {
           msg = '合并完成（' + (data.mergedEntries || 0) + ' 条）';
           if (data.filesExtracted && data.filesExtracted > 0) {
             msg += '，含 ' + data.filesExtracted + ' 个文件';
@@ -1025,6 +1411,7 @@
           }
         }
         importStatus.textContent = msg;
+        fetchDBList();
         fetchCards();
         fetchStats();
         setTimeout(function () { importStatus.textContent = ''; }, 3000);
@@ -1037,6 +1424,7 @@
   });
 
   // ===== Initial =====
+  fetchDBList();
   fetchCards();
   fetchStats();
   fetchVersion();

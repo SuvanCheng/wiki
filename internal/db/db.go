@@ -15,6 +15,8 @@ type QA struct {
 	Category   string `json:"category"`
 	Visibility string `json:"visibility"`
 	Author     string `json:"author"`
+	Starred    bool   `json:"starred"`
+	DBSource   string `json:"db_source,omitempty"`
 	CreatedAt  string `json:"created_at"`
 	UpdatedAt  string `json:"updated_at"`
 }
@@ -28,8 +30,16 @@ type Stats struct {
 	Total         int        `json:"total"`
 	PublicCount   int        `json:"public_count"`
 	InternalCount int        `json:"internal_count"`
+	StarredCount  int        `json:"starred_count"`
 	Categories    []CatCount `json:"categories"`
 	Recent        []QA       `json:"recent"`
+}
+
+type DBEntry struct {
+	Name     string `json:"name"`
+	Path     string `json:"path"`
+	Color    string `json:"color"`
+	Editable bool   `json:"editable"`
 }
 
 func Open(dbPath string) (*sql.DB, error) {
@@ -43,8 +53,8 @@ func Open(dbPath string) (*sql.DB, error) {
 	return db, nil
 }
 
-func InitSchema(db *sql.DB) error {
-	_, err := db.Exec(`
+func InitSchema(database *sql.DB) error {
+	_, err := database.Exec(`
 		CREATE TABLE IF NOT EXISTS questions (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			question TEXT NOT NULL,
@@ -52,6 +62,7 @@ func InitSchema(db *sql.DB) error {
 			category TEXT NOT NULL DEFAULT '',
 			visibility TEXT NOT NULL DEFAULT 'internal' CHECK(visibility IN ('internal', 'public')),
 			author TEXT NOT NULL DEFAULT 'author',
+			starred INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)
@@ -59,10 +70,21 @@ func InitSchema(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	// Migrations for older databases
-	db.Exec("ALTER TABLE questions ADD COLUMN created_at DATETIME")
-	db.Exec("UPDATE questions SET created_at = updated_at WHERE created_at IS NULL")
-	db.Exec("ALTER TABLE questions ADD COLUMN author TEXT NOT NULL DEFAULT 'author'")
+
+	_, err = database.Exec(`
+		CREATE TABLE IF NOT EXISTS meta (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL DEFAULT ''
+		)
+	`)
+	if err != nil {
+		return err
+	}
+
+	database.Exec("ALTER TABLE questions ADD COLUMN created_at DATETIME")
+	database.Exec("UPDATE questions SET created_at = updated_at WHERE created_at IS NULL")
+	database.Exec("ALTER TABLE questions ADD COLUMN author TEXT NOT NULL DEFAULT 'author'")
+	database.Exec("ALTER TABLE questions ADD COLUMN starred INTEGER NOT NULL DEFAULT 0")
 	return nil
 }
 
@@ -110,11 +132,27 @@ func InsertMockData(db *sql.DB) error {
 	return nil
 }
 
+func GetMeta(db *sql.DB, key string) (string, error) {
+	var value string
+	err := db.QueryRow("SELECT value FROM meta WHERE key = ?", key).Scan(&value)
+	if err != nil {
+		return "", err
+	}
+	return value, nil
+}
+
+func SetMeta(db *sql.DB, key, value string) error {
+	_, err := db.Exec("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", key, value)
+	return err
+}
+
 func GetByID(db *sql.DB, id int) (QA, error) {
 	var q QA
+	var starred int
 	err := db.QueryRow(
-		"SELECT id, question, answer, category, visibility, author, created_at, updated_at FROM questions WHERE id = ?", id,
-	).Scan(&q.ID, &q.Question, &q.Answer, &q.Category, &q.Visibility, &q.Author, &q.CreatedAt, &q.UpdatedAt)
+		"SELECT id, question, answer, category, visibility, author, starred, created_at, updated_at FROM questions WHERE id = ?", id,
+	).Scan(&q.ID, &q.Question, &q.Answer, &q.Category, &q.Visibility, &q.Author, &starred, &q.CreatedAt, &q.UpdatedAt)
+	q.Starred = starred != 0
 	return q, err
 }
 
@@ -122,9 +160,13 @@ func Insert(db *sql.DB, q *QA) error {
 	now := time.Now().Format(time.RFC3339)
 	q.CreatedAt = now
 	q.UpdatedAt = now
+	starred := 0
+	if q.Starred {
+		starred = 1
+	}
 	result, err := db.Exec(
-		"INSERT INTO questions (question, answer, category, visibility, author, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		q.Question, q.Answer, q.Category, q.Visibility, q.Author, q.CreatedAt, q.UpdatedAt,
+		"INSERT INTO questions (question, answer, category, visibility, author, starred, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		q.Question, q.Answer, q.Category, q.Visibility, q.Author, starred, q.CreatedAt, q.UpdatedAt,
 	)
 	if err != nil {
 		return err
@@ -139,9 +181,13 @@ func Insert(db *sql.DB, q *QA) error {
 
 func Update(db *sql.DB, q *QA) error {
 	q.UpdatedAt = time.Now().Format(time.RFC3339)
+	starred := 0
+	if q.Starred {
+		starred = 1
+	}
 	_, err := db.Exec(
-		"UPDATE questions SET question=?, answer=?, category=?, visibility=?, author=?, updated_at=? WHERE id=?",
-		q.Question, q.Answer, q.Category, q.Visibility, q.Author, q.UpdatedAt, q.ID,
+		"UPDATE questions SET question=?, answer=?, category=?, visibility=?, author=?, starred=?, updated_at=? WHERE id=?",
+		q.Question, q.Answer, q.Category, q.Visibility, q.Author, starred, q.UpdatedAt, q.ID,
 	)
 	return err
 }
@@ -151,27 +197,54 @@ func Delete(db *sql.DB, id int) error {
 	return err
 }
 
+func ToggleStar(db *sql.DB, id int) (bool, error) {
+	var starred int
+	err := db.QueryRow("SELECT starred FROM questions WHERE id = ?", id).Scan(&starred)
+	if err != nil {
+		return false, err
+	}
+	newVal := 1
+	if starred != 0 {
+		newVal = 0
+	}
+	_, err = db.Exec("UPDATE questions SET starred = ? WHERE id = ?", newVal, id)
+	return newVal != 0, err
+}
+
 func Search(db *sql.DB, keyword string, includeInternal bool) ([]QA, error) {
+	return SearchWithOptions(db, keyword, includeInternal, false)
+}
+
+func SearchWithOptions(db *sql.DB, keyword string, includeInternal bool, starredOnly bool) ([]QA, error) {
 	var rows *sql.Rows
 	var err error
 
-	baseQuery := "SELECT id, question, answer, category, visibility, author, created_at, updated_at FROM questions"
+	cols := "id, question, answer, category, visibility, author, starred, created_at, updated_at"
+	baseQuery := "SELECT " + cols + " FROM questions WHERE 1=1"
 	orderClause := " ORDER BY updated_at DESC"
 
-	if keyword == "" {
-		if includeInternal {
-			rows, err = db.Query(baseQuery + orderClause)
-		} else {
-			rows, err = db.Query(baseQuery+" WHERE visibility = 'public'"+orderClause)
-		}
-	} else {
-		like := "%" + keyword + "%"
-		whereClause := " WHERE (question LIKE ? OR answer LIKE ? OR category LIKE ?)"
-		if !includeInternal {
-			whereClause += " AND visibility = 'public'"
-		}
-		rows, err = db.Query(baseQuery+whereClause+orderClause, like, like, like)
+	var conditions []string
+	var args []interface{}
+
+	if !includeInternal {
+		conditions = append(conditions, "visibility = 'public'")
 	}
+
+	if keyword != "" {
+		like := "%" + keyword + "%"
+		conditions = append(conditions, "(question LIKE ? OR answer LIKE ? OR category LIKE ?)")
+		args = append(args, like, like, like)
+	}
+
+	if starredOnly {
+		conditions = append(conditions, "starred = 1")
+	}
+
+	if len(conditions) > 0 {
+		baseQuery += " AND " + strings.Join(conditions, " AND ")
+	}
+
+	rows, err = db.Query(baseQuery+orderClause, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -180,9 +253,11 @@ func Search(db *sql.DB, keyword string, includeInternal bool) ([]QA, error) {
 	var results []QA
 	for rows.Next() {
 		var q QA
-		if err := rows.Scan(&q.ID, &q.Question, &q.Answer, &q.Category, &q.Visibility, &q.Author, &q.CreatedAt, &q.UpdatedAt); err != nil {
+		var starred int
+		if err := rows.Scan(&q.ID, &q.Question, &q.Answer, &q.Category, &q.Visibility, &q.Author, &starred, &q.CreatedAt, &q.UpdatedAt); err != nil {
 			return nil, err
 		}
+		q.Starred = starred != 0
 		results = append(results, q)
 	}
 	if results == nil {
@@ -194,13 +269,13 @@ func Search(db *sql.DB, keyword string, includeInternal bool) ([]QA, error) {
 func GetStats(db *sql.DB, includeInternal bool) (Stats, error) {
 	var s Stats
 
-	// totals
 	if includeInternal {
 		db.QueryRow("SELECT COUNT(*) FROM questions").Scan(&s.Total)
 	} else {
 		db.QueryRow("SELECT COUNT(*) FROM questions WHERE visibility = 'public'").Scan(&s.Total)
 	}
 	db.QueryRow("SELECT COUNT(*) FROM questions WHERE visibility = 'public'").Scan(&s.PublicCount)
+	db.QueryRow("SELECT COUNT(*) FROM questions WHERE starred = 1").Scan(&s.StarredCount)
 
 	var internalCount int
 	db.QueryRow("SELECT COUNT(*) FROM questions WHERE visibility = 'internal'").Scan(&internalCount)
@@ -208,7 +283,6 @@ func GetStats(db *sql.DB, includeInternal bool) (Stats, error) {
 		s.InternalCount = internalCount
 	}
 
-	// categories: split comma-separated tags and count individually
 	catQuery := "SELECT category FROM questions WHERE category != ''"
 	if !includeInternal {
 		catQuery += " AND visibility = 'public'"
@@ -225,7 +299,6 @@ func GetStats(db *sql.DB, includeInternal bool) (Stats, error) {
 				}
 			}
 		}
-		// Convert map to sorted slice (by count desc)
 		type kv struct {
 			k string
 			v int
@@ -234,7 +307,6 @@ func GetStats(db *sql.DB, includeInternal bool) (Stats, error) {
 		for k, v := range catMap {
 			pairs = append(pairs, kv{k, v})
 		}
-		// Sort by count desc, then name asc
 		for i := 0; i < len(pairs); i++ {
 			for j := i + 1; j < len(pairs); j++ {
 				if pairs[j].v > pairs[i].v || (pairs[j].v == pairs[i].v && pairs[j].k < pairs[i].k) {
@@ -254,8 +326,7 @@ func GetStats(db *sql.DB, includeInternal bool) (Stats, error) {
 		s.Categories = []CatCount{}
 	}
 
-	// recent 5
-	recentQuery := "SELECT id, question, answer, category, visibility, author, created_at, updated_at FROM questions"
+	recentQuery := "SELECT id, question, answer, category, visibility, author, starred, created_at, updated_at FROM questions"
 	if !includeInternal {
 		recentQuery += " WHERE visibility = 'public'"
 	}
@@ -265,7 +336,9 @@ func GetStats(db *sql.DB, includeInternal bool) (Stats, error) {
 		defer recRows.Close()
 		for recRows.Next() {
 			var q QA
-			if err := recRows.Scan(&q.ID, &q.Question, &q.Answer, &q.Category, &q.Visibility, &q.Author, &q.CreatedAt, &q.UpdatedAt); err == nil {
+			var starred int
+			if err := recRows.Scan(&q.ID, &q.Question, &q.Answer, &q.Category, &q.Visibility, &q.Author, &starred, &q.CreatedAt, &q.UpdatedAt); err == nil {
+				q.Starred = starred != 0
 				s.Recent = append(s.Recent, q)
 			}
 		}

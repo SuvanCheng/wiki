@@ -56,4 +56,4 @@ bash build.sh
   bash build.sh
   
   或者编译时直接指定版本绕过 tag：
-  QA_VERSION=1.9.0 bash build.sh
+  QA_VERSION=1.10.0 bash build.sh
